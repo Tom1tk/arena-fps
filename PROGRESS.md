@@ -3,7 +3,7 @@
 > Source of truth: `fps-project-plan.md`
 > This file tracks milestone completion against the plan's Definition of Done (DoD).
 
-## Current Status: **M3 — In Progress (Match rules, bot damage, death/respawn live)**
+## Current Status: **M4 — Complete (Menu, Name Gate, Settings UI live)**
 
 ---
 
@@ -101,8 +101,26 @@
 - [x] New files: `shared/spawn-selection.ts`
 
 ## M4 — Menu & Settings *(blocked until M3 DoD met)*
-- [ ] Name gate, main menu, settings UI
-- [ ] Esc pause overlay, Tab scoreboard
+- [x] Name gate (3–20 chars), main menu, settings UI
+  - Name input on title screen with validation (min 3 chars)
+  - "Enter Arena" button disabled until name is valid
+  - Name persisted in localStorage (`arena-fps-name` key)
+  - Name shown in scoreboard and kill feed
+- [x] Settings panel on title screen (pre-game):
+  - Sensitivity (1–20, step 0.5)
+  - FOV (60–120)
+  - Crosshair type (cross/dot/crossdot/circle)
+  - Crosshair colour (color picker)
+  - Crosshair size (12–48)
+  - Graphics quality (High/Low)
+  - All settings apply live and persist to localStorage
+- [x] In-game settings overlay (via Pause → Settings):
+  - Same controls as menu, synced with current settings
+- [x] Esc pause overlay (Resume · Settings · Leave) per §6.2
+- [x] Tab scoreboard behaviour per §6.2 (releases pointer lock, player stays vulnerable)
+- [x] Settings persist across reloads + apply live
+- [x] All crosshair types render correctly
+- [x] Graphics toggle changes cost (DPR, far plane, lights)
 
 ## M5 — Server & Lobby *(blocked until M4 DoD met)*
 - [ ] WebSocket through CF tunnel

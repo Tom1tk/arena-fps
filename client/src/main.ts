@@ -84,6 +84,93 @@ const damageIndicator = document.getElementById('damage-indicator')!;
 // --- Settings ---
 const settings = SettingsStore.getInstance();
 
+// --- Player name ---
+const playerNameEl = document.getElementById('player-name')! as HTMLInputElement;
+const nameErrorEl = document.getElementById('name-error')!;
+
+// Validate name and enable/disable start button
+function validateName(): boolean {
+  const name = playerNameEl.value.trim();
+  if (name.length < 3) {
+    nameErrorEl.textContent = 'At least 3 characters';
+    startBtn.style.opacity = '0.4';
+    startBtn.style.pointerEvents = 'none';
+    return false;
+  }
+  nameErrorEl.textContent = '';
+  startBtn.style.opacity = '1';
+  startBtn.style.pointerEvents = 'auto';
+  return true;
+}
+
+playerNameEl.addEventListener('input', validateName);
+playerNameEl.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') validateName() && startBtn.click();
+});
+
+// Load saved name
+const savedName = localStorage.getItem('arena-fps-name');
+if (savedName) {
+  playerNameEl.value = savedName;
+  validateName();
+}
+
+// --- Menu settings controls ---
+const menuSensitivity = document.getElementById('menu-sensitivity')! as HTMLInputElement;
+const menuSensitivityVal = document.getElementById('menu-sensitivity-val')!;
+const menuFov = document.getElementById('menu-fov')! as HTMLInputElement;
+const menuFovVal = document.getElementById('menu-fov-val')!;
+const menuCrosshairType = document.getElementById('menu-crosshair-type')! as HTMLSelectElement;
+const menuCrosshairColour = document.getElementById('menu-crosshair-colour')! as HTMLInputElement;
+const menuCrosshairSize = document.getElementById('menu-crosshair-size')! as HTMLInputElement;
+const menuGraphics = document.getElementById('menu-graphics')! as HTMLSelectElement;
+
+// Sync menu controls with settings
+function syncMenuControls(): void {
+  const s = settings.get();
+  (menuSensitivity as HTMLInputElement).value = String(s.sensitivity);
+  menuSensitivityVal.textContent = String(s.sensitivity);
+  (menuFov as HTMLInputElement).value = String(s.fov);
+  menuFovVal.textContent = String(s.fov);
+  (menuCrosshairType as HTMLSelectElement).value = s.crosshairType;
+  (menuCrosshairColour as HTMLInputElement).value = s.crosshairColour;
+  (menuCrosshairSize as HTMLInputElement).value = String(s.crosshairSize);
+  (menuGraphics as HTMLSelectElement).value = s.graphicsQuality;
+}
+
+// Menu control change handlers (apply live)
+menuSensitivity.addEventListener('input', () => {
+  settings.set({ sensitivity: parseFloat(menuSensitivity.value) });
+  menuSensitivityVal.textContent = menuSensitivity.value;
+  if (inputSource) inputSource.setSensitivity(settings.get().sensitivity);
+});
+menuFov.addEventListener('input', () => {
+  const fov = parseFloat(menuFov.value);
+  settings.set({ fov });
+  menuFovVal.textContent = menuFov.value;
+  camera.fov = fov;
+  camera.updateProjectionMatrix();
+});
+menuCrosshairType.addEventListener('change', () => {
+  settings.set({ crosshairType: menuCrosshairType.value as any });
+  updateCrosshair();
+});
+menuCrosshairColour.addEventListener('input', () => {
+  settings.set({ crosshairColour: menuCrosshairColour.value });
+  updateCrosshair();
+});
+menuCrosshairSize.addEventListener('input', () => {
+  settings.set({ crosshairSize: parseFloat(menuCrosshairSize.value) });
+  updateCrosshair();
+});
+menuGraphics.addEventListener('change', () => {
+  applyQuality(menuGraphics.value as any);
+});
+
+// Sync on load
+syncMenuControls();
+updateCrosshair();
+
 // --- Renderer ---
 let renderer: THREE.WebGLRenderer | WebGPURenderer;
 let isWebGPU = false;
@@ -271,25 +358,96 @@ document.addEventListener('keydown', (e) => {
 resumeBtn.addEventListener('click', () => {
   paused = false;
   pauseOverlay.style.display = 'none';
+  settingsOverlay.style.display = 'none';
   (document.querySelector('canvas') as HTMLCanvasElement)?.requestPointerLock();
+});
+
+// Settings button in pause overlay
+const settingsBtn = document.getElementById('settings-btn')!;
+settingsBtn.addEventListener('click', () => {
+  pauseOverlay.style.display = 'none';
+  settingsOverlay.style.display = 'flex';
+  // Sync in-game settings controls
+  const s = settings.get();
+  (sgSensitivity as HTMLInputElement).value = String(s.sensitivity);
+  sgSensitivityVal.textContent = String(s.sensitivity);
+  (sgFov as HTMLInputElement).value = String(s.fov);
+  sgFovVal.textContent = String(s.fov);
+  (sgCrosshairType as HTMLSelectElement).value = s.crosshairType;
+  (sgCrosshairColour as HTMLInputElement).value = s.crosshairColour;
+  (sgCrosshairSize as HTMLInputElement).value = String(s.crosshairSize);
+  (sgGraphics as HTMLSelectElement).value = s.graphicsQuality;
+});
+
+// In-game settings controls
+const settingsOverlay = document.getElementById('settings-overlay')!;
+const settingsCloseBtn = document.getElementById('settings-close-btn')!;
+const sgSensitivity = document.getElementById('sg-sensitivity')! as HTMLInputElement;
+const sgSensitivityVal = document.getElementById('sg-sensitivity-val')!;
+const sgFov = document.getElementById('sg-fov')! as HTMLInputElement;
+const sgFovVal = document.getElementById('sg-fov-val')!;
+const sgCrosshairType = document.getElementById('sg-crosshair-type')! as HTMLSelectElement;
+const sgCrosshairColour = document.getElementById('sg-crosshair-colour')! as HTMLInputElement;
+const sgCrosshairSize = document.getElementById('sg-crosshair-size')! as HTMLInputElement;
+const sgGraphics = document.getElementById('sg-graphics')! as HTMLSelectElement;
+
+// In-game setting change handlers
+sgSensitivity.addEventListener('input', () => {
+  settings.set({ sensitivity: parseFloat(sgSensitivity.value) });
+  sgSensitivityVal.textContent = sgSensitivity.value;
+  if (inputSource) inputSource.setSensitivity(settings.get().sensitivity);
+});
+sgFov.addEventListener('input', () => {
+  const fov = parseFloat(sgFov.value);
+  settings.set({ fov });
+  sgFovVal.textContent = sgFov.value;
+  camera.fov = fov;
+  camera.updateProjectionMatrix();
+});
+sgCrosshairType.addEventListener('change', () => {
+  settings.set({ crosshairType: sgCrosshairType.value as any });
+  updateCrosshair();
+});
+sgCrosshairColour.addEventListener('input', () => {
+  settings.set({ crosshairColour: sgCrosshairColour.value });
+  updateCrosshair();
+});
+sgCrosshairSize.addEventListener('input', () => {
+  settings.set({ crosshairSize: parseFloat(sgCrosshairSize.value) });
+  updateCrosshair();
+});
+sgGraphics.addEventListener('change', () => {
+  applyQuality(sgGraphics.value as any);
+});
+
+settingsCloseBtn.addEventListener('click', () => {
+  settingsOverlay.style.display = 'none';
 });
 
 leaveBtn.addEventListener('click', () => {
   started = false;
   paused = false;
   pauseOverlay.style.display = 'none';
+  settingsOverlay.style.display = 'none';
   titleOverlay.style.display = 'flex';
+  syncMenuControls();
   if (document.pointerLockElement) document.exitPointerLock();
 });
 
+function getPlayerName(): string {
+  return localStorage.getItem('arena-fps-name') || 'Player';
+}
+
 function updateTabScoreboard(): void {
   const tbody = document.getElementById('tab-sb-body')!;
-  tbody.innerHTML = `<tr><td>1</td><td>You</td><td>${kills}</td><td>${playerDeaths}</td></tr>`;
+  const name = getPlayerName();
+  tbody.innerHTML = `<tr><td>1</td><td>${name}</td><td>${kills}</td><td>${playerDeaths}</td></tr>`;
 }
 
 function updateTabScoreboardM3(): void {
   const tbody = document.getElementById('tab-sb-body')!;
-  let rows = `<tr><td>1</td><td>You</td><td>${kills}</td><td>${playerDeaths}</td></tr>`;
+  const name = getPlayerName();
+  let rows = `<tr><td>1</td><td>${name}</td><td>${kills}</td><td>${playerDeaths}</td></tr>`;
   // Add bot entries sorted by kills
   const bots = dummyTargets.map(t => ({ name: t.name, k: t.kills, d: t.deaths }));
   for (const b of bots) {
@@ -475,6 +633,12 @@ startBtn.addEventListener('click', () => {
   titleOverlay.style.display = 'none';
   started = true;
   paused = false;
+
+  // Save player name
+  const name = playerNameEl.value.trim();
+  if (name.length >= 3) {
+    localStorage.setItem('arena-fps-name', name);
+  }
 
   // Init input source
   const theCanvas = document.querySelector('canvas')!;

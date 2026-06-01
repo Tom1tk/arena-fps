@@ -168,6 +168,7 @@
   <div id="pause-overlay">
     <h2>PAUSED</h2>
     <button id="resume-btn">Resume</button>
+    <button id="settings-btn">Settings</button>
     <button id="leave-btn">Leave to Menu</button>
   </div>
 
@@ -183,12 +184,116 @@
   <div id="title-overlay">
     <h1>ARENA FPS</h1>
     <p>Browser Free-For-All</p>
+
+    <!-- Name gate -->
+    <div style="margin-bottom:20px; text-align:center;">
+      <label for="player-name" style="color:#aaa; font-size:14px;">Callsign</label><br>
+      <input id="player-name" type="text" placeholder="Enter name (3–20 chars)" maxlength="20"
+        style="margin-top:6px; padding:8px 16px; font-size:16px; font-family:monospace;
+        background:#222; color:#fff; border:1px solid #444; border-radius:4px; text-align:center;
+        width:240px; outline:none;" />
+      <div id="name-error" style="color:#f66; font-size:12px; margin-top:4px; min-height:16px;"></div>
+    </div>
+
+    <!-- Settings panel -->
+    <div id="menu-settings" style="margin-bottom:24px; display:grid; grid-template-columns:1fr 1fr; gap:12px; width:400px;">
+      <div>
+        <label style="color:#aaa; font-size:12px;">Sensitivity</label><br>
+        <input id="menu-sensitivity" type="range" min="1" max="20" step="0.5" value="10"
+          style="width:180px;" />
+        <span id="menu-sensitivity-val" style="color:#fff; font-size:13px; font-family:monospace;"></span>
+      </div>
+      <div>
+        <label style="color:#aaa; font-size:12px;">FOV</label><br>
+        <input id="menu-fov" type="range" min="60" max="120" step="1" value="90"
+          style="width:180px;" />
+        <span id="menu-fov-val" style="color:#fff; font-size:13px; font-family:monospace;"></span>
+      </div>
+      <div>
+        <label style="color:#aaa; font-size:12px;">Crosshair</label><br>
+        <select id="menu-crosshair-type" style="padding:4px; background:#222; color:#fff; border:1px solid #444; border-radius:4px;">
+          <option value="cross">Cross</option>
+          <option value="dot">Dot</option>
+          <option value="crossdot">Cross + Dot</option>
+          <option value="circle">Circle</option>
+        </select>
+      </div>
+      <div>
+        <label style="color:#aaa; font-size:12px;">Crosshair Colour</label><br>
+        <input id="menu-crosshair-colour" type="color" value="#00ff00"
+          style="width:50px; height:28px; border:none; cursor:pointer;" />
+      </div>
+      <div>
+        <label style="color:#aaa; font-size:12px;">Crosshair Size</label><br>
+        <input id="menu-crosshair-size" type="range" min="12" max="48" step="2" value="24"
+          style="width:180px;" />
+      </div>
+      <div>
+        <label style="color:#aaa; font-size:12px;">Graphics</label><br>
+        <select id="menu-graphics" style="padding:4px; background:#222; color:#fff; border:1px solid #444; border-radius:4px;">
+          <option value="high">High</option>
+          <option value="low">Low</option>
+        </select>
+      </div>
+    </div>
+
     <div class="controls">
       WASD — Move &nbsp;|&nbsp; Mouse — Look &nbsp;|&nbsp; Click — Shoot<br>
       Space — Jump &nbsp;|&nbsp; Ctrl — Crouch &nbsp;|&nbsp; R — Reload<br>
       Esc — Pause &nbsp;|&nbsp; Tab — Scoreboard
     </div>
-    <button id="start-btn">ENTER ARENA</button>
+    <button id="start-btn" style="opacity:0.4; pointer-events:none;">ENTER ARENA</button>
+  </div>
+
+  <!-- Settings overlay (in-game, via pause) -->
+  <div id="settings-overlay" style="display:none; position:fixed; inset:0; z-index:310;
+       background:rgba(0,0,0,0.85); color:#fff; flex-direction:column; align-items:center;
+       justify-content:center; font-family:monospace;">
+    <h2 style="margin-bottom:20px;">SETTINGS</h2>
+    <div id="in-game-settings" style="display:grid; grid-template-columns:1fr 1fr; gap:16px; width:440px;">
+      <div>
+        <label style="color:#aaa; font-size:12px;">Sensitivity</label><br>
+        <input id="sg-sensitivity" type="range" min="1" max="20" step="0.5" value="10"
+          style="width:200px;" />
+        <span id="sg-sensitivity-val" style="color:#fff; font-size:13px;"></span>
+      </div>
+      <div>
+        <label style="color:#aaa; font-size:12px;">FOV</label><br>
+        <input id="sg-fov" type="range" min="60" max="120" step="1" value="90"
+          style="width:200px;" />
+        <span id="sg-fov-val" style="color:#fff; font-size:13px;"></span>
+      </div>
+      <div>
+        <label style="color:#aaa; font-size:12px;">Crosshair</label><br>
+        <select id="sg-crosshair-type" style="padding:4px; background:#222; color:#fff; border:1px solid #444; border-radius:4px;">
+          <option value="cross">Cross</option>
+          <option value="dot">Dot</option>
+          <option value="crossdot">Cross + Dot</option>
+          <option value="circle">Circle</option>
+        </select>
+      </div>
+      <div>
+        <label style="color:#aaa; font-size:12px;">Crosshair Colour</label><br>
+        <input id="sg-crosshair-colour" type="color" value="#00ff00"
+          style="width:50px; height:28px; border:none; cursor:pointer;" />
+      </div>
+      <div>
+        <label style="color:#aaa; font-size:12px;">Crosshair Size</label><br>
+        <input id="sg-crosshair-size" type="range" min="12" max="48" step="2" value="24"
+          style="width:200px;" />
+      </div>
+      <div>
+        <label style="color:#aaa; font-size:12px;">Graphics</label><br>
+        <select id="sg-graphics" style="padding:4px; background:#222; color:#fff; border:1px solid #444; border-radius:4px;">
+          <option value="high">High</option>
+          <option value="low">Low</option>
+        </select>
+      </div>
+    </div>
+    <button id="settings-close-btn" style="margin-top:24px; padding:10px 32px; font-size:16px;
+      border:none; border-radius:6px; background:#2a6; color:#fff; cursor:pointer;">
+      DONE
+    </button>
   </div>
 
   <!-- Death screen -->
