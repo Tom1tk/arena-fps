@@ -96,11 +96,8 @@ export class KeyboardMouseSource implements InputSource {
   private onMouseMove = (e: MouseEvent) => {
     if (!this.pointerLocked) return;
 
-    // Standard FPS convention: mouse right → positive yaw, mouse up → positive pitch
-    // Positive yaw = rotate clockwise looking down = camera looks toward +X
-    // Positive pitch = look up
-    this.yaw += e.movementX * this.sensitivity;
-    this.pitch += e.movementY * this.sensitivity;
+    this.yaw -= e.movementX * this.sensitivity;
+    this.pitch -= e.movementY * this.sensitivity;
     this.pitch = clamp(this.pitch, -Math.PI / 2 + 0.01, Math.PI / 2 - 0.01);
   };
 

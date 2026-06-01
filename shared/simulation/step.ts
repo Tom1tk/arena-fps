@@ -122,8 +122,11 @@ export function playerStep(
   p.eyeHeight = p.crouching ? PLAYER_CROUCH_HEIGHT : PLAYER_EYE_HEIGHT;
 
   // --- Compute move direction in world space from yaw ---
-  const cosYaw = Math.cos(p.yaw);
-  const sinYaw = Math.sin(p.yaw);
+  // Negate yaw here: three.js camera.rotation.y uses opposite sign to our
+  // yaw accumulator (mouse: yaw -= movementX), so we negate to match the
+  // visual facing direction the player sees.
+  const cosYaw = Math.cos(-p.yaw);
+  const sinYaw = Math.sin(-p.yaw);
 
   // Forward = -Z in three.js, Right = +X
   _dir.x = input.moveX * cosYaw - input.moveZ * sinYaw;
