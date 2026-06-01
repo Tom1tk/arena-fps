@@ -122,14 +122,14 @@
     #tab-scoreboard th { color: #888; font-weight: normal; }
     #tab-scoreboard td:last-child { text-align: right; }
 
-    /* Title / Lobby screen */
+    /* Title screen */
     #title-overlay {
       position: fixed; inset: 0; z-index: 400;
       display: flex; flex-direction: column; align-items: center; justify-content: center;
       background: rgba(0,0,0,0.85); color: #fff;
     }
     #title-overlay h1 { font-size: 3rem; margin-bottom: 0.5rem; letter-spacing: 0.1em; }
-    #title-overlay p { color: #888; margin-bottom: 0.5rem; font-size: 1rem; }
+    #title-overlay p { color: #888; margin-bottom: 1rem; font-size: 1rem; }
     #title-overlay .controls { color: #666; margin-bottom: 1rem; font-size: 0.85rem; line-height: 1.8; text-align: center; }
     #title-overlay button {
       padding: 8px 24px; font-size: 1rem; border: none; border-radius: 6px;
@@ -137,13 +137,33 @@
     }
     #title-overlay button:hover { background: #3b7; }
     #title-overlay button:disabled { opacity: 0.4; cursor: not-allowed; }
+    #title-overlay button.secondary { background: #444; }
+    #title-overlay button.secondary:hover { background: #555; }
 
-    /* Lobby panel */
+    /* Menu buttons row */
+    #menu-buttons {
+      display: flex; flex-direction: column; gap: 8px; align-items: center; margin-top: 16px;
+    }
+    #menu-buttons button { min-width: 200px; }
+
+    /* Settings panel (submenu, hidden by default) */
+    #menu-settings-panel {
+      display: none; flex-direction: column; align-items: center;
+      margin-top: 16px; width: 420px;
+    }
+    #menu-settings-panel.visible { display: flex; }
+    #menu-settings-panel h3 { font-size: 1.2rem; margin-bottom: 12px; color: #ccc; }
+    #menu-settings-grid {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 12px; width: 100%;
+    }
+
+    /* Lobby panel (submenu, hidden by default) */
     #lobby-panel {
       display: none; flex-direction: column; align-items: center; width: 440px;
       margin-top: 16px;
     }
     #lobby-panel.visible { display: flex; }
+    #lobby-panel h3 { font-size: 1.2rem; margin-bottom: 8px; color: #ccc; }
     #lobby-code-display {
       font: bold 36px monospace; color: #ff0; letter-spacing: 0.3em; margin: 8px 0;
       text-shadow: 0 0 12px rgba(255,255,0,0.4);
@@ -176,6 +196,8 @@
       background: #222; color: #fff; border: 1px solid #444; border-radius: 4px;
       text-align: center; width: 120px; text-transform: uppercase; letter-spacing: 0.2em;
     }
+    .back-btn { background: #666 !important; margin-top: 8px; }
+    .back-btn:hover { background: #777 !important; }
 
     /* Hit marker */
     #hit-marker {
@@ -229,7 +251,7 @@
     </table>
   </div>
 
-  <!-- Title / Lobby screen -->
+  <!-- Title screen -->
   <div id="title-overlay">
     <h1>ARENA FPS</h1>
     <p>Browser Free-For-All</p>
@@ -244,56 +266,62 @@
       <div id="name-error" style="color:#f66; font-size:12px; margin-top:4px; min-height:16px;"></div>
     </div>
 
-    <!-- Settings panel (collapsible) -->
-    <div id="menu-settings" style="margin-bottom:16px; display:grid; grid-template-columns:1fr 1fr; gap:12px; width:400px;">
-      <div>
-        <label style="color:#aaa; font-size:12px;">Sensitivity</label><br>
-        <input id="menu-sensitivity" type="range" min="1" max="20" step="0.5" value="10"
-          style="width:180px;" />
-        <span id="menu-sensitivity-val" style="color:#fff; font-size:13px; font-family:monospace;"></span>
-      </div>
-      <div>
-        <label style="color:#aaa; font-size:12px;">FOV</label><br>
-        <input id="menu-fov" type="range" min="60" max="120" step="1" value="90"
-          style="width:180px;" />
-        <span id="menu-fov-val" style="color:#fff; font-size:13px; font-family:monospace;"></span>
-      </div>
-      <div>
-        <label style="color:#aaa; font-size:12px;">Crosshair</label><br>
-        <select id="menu-crosshair-type" style="padding:4px; background:#222; color:#fff; border:1px solid #444; border-radius:4px;">
-          <option value="cross">Cross</option>
-          <option value="dot">Dot</option>
-          <option value="crossdot">Cross + Dot</option>
-          <option value="circle">Circle</option>
-        </select>
-      </div>
-      <div>
-        <label style="color:#aaa; font-size:12px;">Crosshair Colour</label><br>
-        <input id="menu-crosshair-colour" type="color" value="#00ff00"
-          style="width:50px; height:28px; border:none; cursor:pointer;" />
-      </div>
-      <div>
-        <label style="color:#aaa; font-size:12px;">Crosshair Size</label><br>
-        <input id="menu-crosshair-size" type="range" min="12" max="48" step="2" value="24"
-          style="width:180px;" />
-      </div>
-      <div>
-        <label style="color:#aaa; font-size:12px;">Graphics</label><br>
-        <select id="menu-graphics" style="padding:4px; background:#222; color:#fff; border:1px solid #444; border-radius:4px;">
-          <option value="high">High</option>
-          <option value="low">Low</option>
-        </select>
-      </div>
+    <!-- Main menu buttons -->
+    <div id="menu-buttons">
+      <button id="btn-play-online">PLAY ONLINE</button>
+      <button id="btn-practice" class="secondary">PRACTICE (vs Bots)</button>
+      <button id="btn-settings" class="secondary">SETTINGS</button>
     </div>
 
-    <div class="controls">
-      WASD — Move &nbsp;|&nbsp; Mouse — Look &nbsp;|&nbsp; Click — Shoot<br>
-      Space — Jump &nbsp;|&nbsp; Ctrl — Crouch &nbsp;|&nbsp; R — Reload<br>
-      Esc — Pause &nbsp;|&nbsp; Tab — Scoreboard
+    <!-- Settings submenu (hidden) -->
+    <div id="menu-settings-panel">
+      <h3>SETTINGS</h3>
+      <div id="menu-settings-grid">
+        <div>
+          <label style="color:#aaa; font-size:12px;">Sensitivity</label><br>
+          <input id="menu-sensitivity" type="range" min="1" max="20" step="0.5" value="10"
+            style="width:180px;" />
+          <span id="menu-sensitivity-val" style="color:#fff; font-size:13px; font-family:monospace;"></span>
+        </div>
+        <div>
+          <label style="color:#aaa; font-size:12px;">FOV</label><br>
+          <input id="menu-fov" type="range" min="60" max="120" step="1" value="90"
+            style="width:180px;" />
+          <span id="menu-fov-val" style="color:#fff; font-size:13px; font-family:monospace;"></span>
+        </div>
+        <div>
+          <label style="color:#aaa; font-size:12px;">Crosshair</label><br>
+          <select id="menu-crosshair-type" style="padding:4px; background:#222; color:#fff; border:1px solid #444; border-radius:4px;">
+            <option value="cross">Cross</option>
+            <option value="dot">Dot</option>
+            <option value="crossdot">Cross + Dot</option>
+            <option value="circle">Circle</option>
+          </select>
+        </div>
+        <div>
+          <label style="color:#aaa; font-size:12px;">Crosshair Colour</label><br>
+          <input id="menu-crosshair-colour" type="color" value="#00ff00"
+            style="width:50px; height:28px; border:none; cursor:pointer;" />
+        </div>
+        <div>
+          <label style="color:#aaa; font-size:12px;">Crosshair Size</label><br>
+          <input id="menu-crosshair-size" type="range" min="12" max="48" step="2" value="24"
+            style="width:180px;" />
+        </div>
+        <div>
+          <label style="color:#aaa; font-size:12px;">Graphics</label><br>
+          <select id="menu-graphics" style="padding:4px; background:#222; color:#fff; border:1px solid #444; border-radius:4px;">
+            <option value="high">High</option>
+            <option value="low">Low</option>
+          </select>
+        </div>
+      </div>
+      <button id="btn-back-from-settings" class="back-btn" style="margin-top:12px;">← BACK</button>
     </div>
 
-    <!-- Lobby panel (shown after connecting) -->
+    <!-- Lobby panel (hidden) -->
     <div id="lobby-panel">
+      <h3>LOBBY</h3>
       <div id="lobby-code-display"></div>
       <div id="lobby-roster">
         <table>
@@ -307,17 +335,21 @@
         <button id="lobby-create" style="display:none;">Create Lobby</button>
         <button id="lobby-ready" style="display:none;">Ready</button>
         <button id="lobby-start" style="display:none;">Start Match</button>
-        <button id="lobby-leave" style="display:none;">Leave</button>
+        <button id="lobby-leave" style="display:none;">Leave Lobby</button>
         <button id="lobby-disconnect" style="display:none;">Disconnect</button>
       </div>
       <div id="lobby-join-row">
         <input id="lobby-join-code" type="text" placeholder="CODE" maxlength="5" />
         <button id="lobby-join">Join</button>
       </div>
+      <button id="btn-back-from-lobby" class="back-btn" style="margin-top:8px;">← BACK</button>
     </div>
 
-    <!-- Pre-lobby buttons (shown when not connected) -->
-    <button id="start-btn">ENTER ARENA</button>
+    <div class="controls">
+      WASD — Move &nbsp;|&nbsp; Mouse — Look &nbsp;|&nbsp; Click — Shoot<br>
+      Space — Jump &nbsp;|&nbsp; Ctrl — Crouch &nbsp;|&nbsp; R — Reload<br>
+      Esc — Pause &nbsp;|&nbsp; Tab — Scoreboard
+    </div>
   </div>
 
   <!-- Settings overlay (in-game, via pause) -->

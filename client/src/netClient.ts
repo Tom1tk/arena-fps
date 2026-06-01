@@ -15,7 +15,7 @@ export interface RosterEntry {
 }
 
 export interface LobbyState {
-  phase: 'disconnected' | 'lobby' | 'readying' | 'countdown' | 'playing' | 'post_match';
+  phase: 'disconnected' | 'connected' | 'lobby' | 'readying' | 'countdown' | 'playing' | 'post_match';
   code: string | null;
   name: string | null;
   isHost: boolean;
@@ -152,7 +152,10 @@ export class NetClient {
   private handleMessage(msg: LobbyMessage): void {
     switch (msg.type) {
       case 'welcome':
-        // Connection established
+        // Connection established — show create/join options
+        this.state.phase = 'connected';
+        this.state.error = null;
+        this.notify();
         break;
 
       case 'created':
@@ -172,9 +175,11 @@ export class NetClient {
         break;
 
       case 'left':
-        this.state.phase = 'disconnected';
+        this.state.phase = 'connected';
         this.state.code = null;
         this.state.roster = [];
+        this.state.isHost = false;
+        this.notify();
         break;
 
       case 'roster_update':
@@ -191,18 +196,21 @@ export class NetClient {
         // All non-host players ready, host can start
         this.state.phase = 'readying';
         this.state.error = null;
+        this.notify();
         break;
 
       case 'match_start':
         this.state.phase = msg.phase || 'countdown';
         this.state.countdown = msg.countdown || 3;
         this.state.error = null;
+        this.notify();
         break;
 
       case 'ready_state':
         // Update our own ready state
         const me2 = this.state.roster.find(r => r.name === this.state.name);
         if (me2) me2.ready = msg.ready;
+        this.notify();
         break;
 
       case 'host_transfer':
@@ -211,6 +219,7 @@ export class NetClient {
           this.state.isHost = false;
         }
         // Update roster from next roster_update
+        this.notify();
         break;
 
       case 'error':

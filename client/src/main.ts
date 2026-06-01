@@ -63,7 +63,6 @@ const fpsEl = document.getElementById('fps-counter')!;
 const debugEl = document.getElementById('debug-line')!;
 const toggleBtn = document.getElementById('graphics-toggle')!;
 const titleOverlay = document.getElementById('title-overlay')!;
-const startBtn = document.getElementById('start-btn')!;
 const pauseOverlay = document.getElementById('pause-overlay')!;
 const resumeBtn = document.getElementById('resume-btn')!;
 const leaveBtn = document.getElementById('leave-btn')!;
@@ -85,13 +84,29 @@ const damageIndicator = document.getElementById('damage-indicator')!;
 // --- Settings ---
 const settings = SettingsStore.getInstance();
 
+// --- Menu Navigation State ---
+// Three sub-menus: menu-buttons (default), menu-settings-panel, lobby-panel
+const menuButtons = document.getElementById('menu-buttons')!;
+const menuSettingsPanel = document.getElementById('menu-settings-panel')!;
+const lobbyPanel = document.getElementById('lobby-panel')!;
+
+function showMenu(menu: string): void {
+  menuButtons.style.display = menu === 'main' ? 'flex' : 'none';
+  menuSettingsPanel.classList.toggle('visible', menu === 'settings');
+  lobbyPanel.classList.toggle('visible', menu === 'lobby');
+}
+
+function hideAllSubMenus(): void {
+  menuSettingsPanel.classList.remove('visible');
+  lobbyPanel.classList.remove('visible');
+  menuButtons.style.display = 'flex';
+}
+
 // --- M5: NetClient (lobby networking) ---
 import { NetClient } from './netClient';
-
 const netClient = new NetClient();
 
 // Lobby UI DOM refs
-const lobbyPanel = document.getElementById('lobby-panel')!;
 const lobbyCodeDisplay = document.getElementById('lobby-code-display')!;
 const lobbyRosterBody = document.getElementById('lobby-roster-body')!;
 const lobbyStatus = document.getElementById('lobby-status')!;
@@ -103,28 +118,68 @@ const lobbyLeaveBtn = document.getElementById('lobby-leave')!;
 const lobbyDisconnectBtn = document.getElementById('lobby-disconnect')!;
 const lobbyJoinCodeInput = document.getElementById('lobby-join-code')! as HTMLInputElement;
 const lobbyJoinBtn = document.getElementById('lobby-join')!;
+const lobbyJoinRow = document.getElementById('lobby-join-row')!;
 
-// Connect button = "Enter Arena"
-startBtn.addEventListener('click', () => {
+// --- Menu Button Handlers ---
+
+// Play Online → connect to server, show lobby
+const btnPlayOnline = document.getElementById('btn-play-online')!;
+btnPlayOnline.addEventListener('click', () => {
   if (!validateName()) return;
   const name = playerNameEl.value.trim();
   localStorage.setItem('arena-fps-name', name);
 
-  // Connect to server via CF tunnel
-  const serverUrl = window.location.origin.replace('http', 'ws');
+  // Connect to WebSocket server
+  const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const serverUrl = `${wsProto}//${window.location.host}`;
   netClient.connect(serverUrl);
-  titleOverlay.style.display = 'none';
-  // Show lobby panel
-  lobbyPanel.classList.add('visible');
+
+  showMenu('lobby');
   lobbyStatus.textContent = 'Connecting...';
-  lobbyJoinRow.style.display = 'flex';
   lobbyCreateBtn.style.display = 'inline-block';
-  lobbyDisconnectBtn.style.display = 'inline-block';
+  lobbyDisconnectBtn.style.display = 'none';
+  lobbyLeaveBtn.style.display = 'none';
+  lobbyReadyBtn.style.display = 'none';
+  lobbyStartBtn.style.display = 'none';
+  lobbyJoinRow.style.display = 'flex';
+  lobbyError.textContent = '';
+  lobbyRosterBody.innerHTML = '';
+  lobbyCodeDisplay.textContent = '';
+});
+
+// Practice → start single-player vs bots
+const btnPractice = document.getElementById('btn-practice')!;
+btnPractice.addEventListener('click', () => {
+  if (!validateName()) return;
+  const name = playerNameEl.value.trim();
+  localStorage.setItem('arena-fps-name', name);
+
+  titleOverlay.style.display = 'none';
+  netClient.disconnect();
+  initGame();
+});
+
+// Settings → show settings submenu
+const btnSettings = document.getElementById('btn-settings')!;
+btnSettings.addEventListener('click', () => {
+  syncMenuControls();
+  showMenu('settings');
+});
+
+// Back from settings
+const btnBackFromSettings = document.getElementById('btn-back-from-settings')!;
+btnBackFromSettings.addEventListener('click', () => {
+  showMenu('main');
+});
+
+// Back from lobby → return to main menu
+const btnBackFromLobby = document.getElementById('btn-back-from-lobby')!;
+btnBackFromLobby.addEventListener('click', () => {
+  netClient.disconnect();
+  showMenu('main');
 });
 
 // Lobby button handlers
-const lobbyJoinRow = document.getElementById('lobby-join-row')!;
-
 lobbyCreateBtn.addEventListener('click', () => {
   const name = localStorage.getItem('arena-fps-name') || playerNameEl.value.trim();
   netClient.createRoom(name);
@@ -156,9 +211,10 @@ lobbyLeaveBtn.addEventListener('click', () => {
 
 lobbyDisconnectBtn.addEventListener('click', () => {
   netClient.disconnect();
+  showMenu('main');
 });
 
-// Sync lobby UI
+// Sync lobby UI on state change
 netClient.onChange(() => {
   const state = netClient.getState();
 
@@ -177,69 +233,80 @@ netClient.onChange(() => {
   // Status
   if (state.phase === 'disconnected') {
     lobbyStatus.textContent = 'Disconnected';
+    showMenu('main');
+  } else if (state.phase === 'connected') {
+    lobbyStatus.textContent = 'Connected — create or join a lobby';
+    lobbyCreateBtn.style.display = 'inline-block';
+    lobbyDisconnectBtn.style.display = 'inline-block';
+    lobbyLeaveBtn.style.display = 'none';
+    lobbyReadyBtn.style.display = 'none';
+    lobbyStartBtn.style.display = 'none';
+    lobbyJoinRow.style.display = 'flex';
   } else if (state.phase === 'lobby') {
     lobbyStatus.textContent = `Waiting for players (${state.roster.length}/${MAX_PLAYERS})`;
+    lobbyCreateBtn.style.display = 'none';
+    lobbyDisconnectBtn.style.display = 'inline-block';
+    lobbyLeaveBtn.style.display = 'inline-block';
+    lobbyJoinRow.style.display = 'none';
+    lobbyReadyBtn.style.display = state.isHost ? 'none' : 'inline-block';
+    lobbyStartBtn.style.display = state.isHost ? 'inline-block' : 'none';
   } else if (state.phase === 'readying') {
-    lobbyStatus.textContent = 'All ready — host can start';
+    lobbyStatus.textContent = 'All non-host ready — host can start';
+    lobbyReadyBtn.style.display = state.isHost ? 'none' : 'inline-block';
+    lobbyStartBtn.style.display = state.isHost ? 'inline-block' : 'none';
   } else if (state.phase === 'countdown') {
     lobbyStatus.textContent = `Match starting in ${state.countdown}s...`;
+    lobbyCreateBtn.style.display = 'none';
+    lobbyReadyBtn.style.display = 'none';
+    lobbyStartBtn.style.display = 'none';
+    lobbyLeaveBtn.style.display = 'none';
+    lobbyDisconnectBtn.style.display = 'none';
   } else if (state.phase === 'playing') {
     lobbyStatus.textContent = 'Match in progress';
+    if (!started) {
+      lobbyPanel.classList.remove('visible');
+      titleOverlay.style.display = 'none';
+      initGame();
+    }
   }
 
   // Error
   lobbyError.textContent = state.error || '';
-
-  // Button visibility
-  lobbyCreateBtn.style.display = state.phase === 'disconnected' ? 'inline-block' : 'none';
-  lobbyDisconnectBtn.style.display = state.phase !== 'disconnected' ? 'inline-block' : 'none';
-  lobbyJoinRow.style.display = state.phase !== 'disconnected' ? 'flex' : 'none';
-
-  if (state.code) {
-    lobbyCreateBtn.style.display = 'none';
-    lobbyLeaveBtn.style.display = 'inline-block';
-    lobbyReadyBtn.style.display = state.isHost ? 'none' : (state.phase === 'lobby' || state.phase === 'readying') ? 'inline-block' : 'none';
-    lobbyStartBtn.style.display = state.isHost && (state.phase === 'lobby' || state.phase === 'readying') ? 'inline-block' : 'none';
-  } else {
-    lobbyLeaveBtn.style.display = 'none';
-    lobbyReadyBtn.style.display = 'none';
-    lobbyStartBtn.style.display = 'none';
-  }
-
-  // When match starts, enter the game
-  if (state.phase === 'countdown' && state.countdown > 0) {
-    // Wait for countdown to end
-  }
-  if (state.phase === 'playing' && !started) {
-    // Enter the game — hide lobby, start game
-    lobbyPanel.classList.remove('visible');
-    titleOverlay.style.display = 'none';
-    initGame();
-  }
 });
 
 // --- Player name ---
 const playerNameEl = document.getElementById('player-name')! as HTMLInputElement;
 const nameErrorEl = document.getElementById('name-error')!;
 
-// Validate name and enable/disable start button
+// Validate name and enable/disable online button
 function validateName(): boolean {
   const name = playerNameEl.value.trim();
   if (name.length < 3) {
     nameErrorEl.textContent = 'At least 3 characters';
-    startBtn.style.opacity = '0.4';
-    startBtn.style.pointerEvents = 'none';
+    btnPlayOnline.style.opacity = '0.4';
+    btnPlayOnline.style.pointerEvents = 'none';
+    btnPractice.style.opacity = '0.4';
+    btnPractice.style.pointerEvents = 'none';
     return false;
   }
   nameErrorEl.textContent = '';
-  startBtn.style.opacity = '1';
-  startBtn.style.pointerEvents = 'auto';
+  btnPlayOnline.style.opacity = '1';
+  btnPlayOnline.style.pointerEvents = 'auto';
+  btnPractice.style.opacity = '1';
+  btnPractice.style.pointerEvents = 'auto';
   return true;
 }
 
 playerNameEl.addEventListener('input', validateName);
 playerNameEl.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') validateName() && startBtn.click();
+  if (e.key === 'Enter') {
+    if (validateName()) {
+      // If on main menu, click Play Online
+      if (menuButtons.style.display !== 'none') {
+        btnPlayOnline.click();
+      }
+    }
+  }
 });
 
 // Load saved name
