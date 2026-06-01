@@ -715,9 +715,10 @@ function renderLoop(now: number): void {
     return;
   }
 
-  // --- Fixed timestep simulation ---
-  simAccum += frameDt;
+    simAccum += frameDt;
   while (simAccum >= TICK_DT) {
+    // Don't simulate movement/shooting when dead — only countdown
+    if (!isDead) {
     // Snapshot position before stepping (for render interpolation)
     prevPos.x = player.pos.x;
     prevPos.y = player.pos.y;
@@ -809,6 +810,7 @@ function renderLoop(now: number): void {
 
       playerStep(player, input, TICK_DT, WORLD_BOUNDS, OBSTACLES);
     }
+    } // end if (!isDead)
     simAccum -= TICK_DT;
   }
 
