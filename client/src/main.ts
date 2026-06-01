@@ -365,8 +365,8 @@ function renderLoop(now: number): void {
   renderer.render(scene, camera);
   const renderMs = performance.now() - renderStart;
 
-  // --- Debug line (updated every frame with render timing) ---
-  debugEl.textContent = `${isWebGPU ? 'WebGPU' : 'WebGL2'} | render: ${renderMs.toFixed(1)}ms | tick: 30Hz`;
+  // --- Debug info (throttled via FPSCounter) ---
+  fpsCounter.setDebugInfo(`${isWebGPU ? 'WebGPU' : 'WebGL2'} | render: ${renderMs.toFixed(1)}ms | tick: 30Hz`);
 
   // --- Update HUD (throttled: only when values actually change) ---
   const hpPct = Math.round((hp / PLAYER_MAX_HP) * 100);
