@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { WebGPURenderer } from 'three/webgpu';
 import type { GraphicsQuality } from '../../shared/types';
-import { TICK_DT, PLAYER_MAX_HP, MAG_SIZE, PLAYER_RADIUS } from '../../shared/constants';
+import { TICK_DT, PLAYER_MAX_HP, MAG_SIZE, PLAYER_RADIUS, FIRE_RATE_RPM } from '../../shared/constants';
 import { playerStep, type PlayerSim } from '../../shared/simulation/step';
 import { clamp } from '../../shared/math';
 import { createArena } from './arena';
@@ -16,6 +16,37 @@ const WORLD_BOUNDS = {
   minX: -ARENA_HALF, maxX: ARENA_HALF,
   minZ: -ARENA_HALF, maxZ: ARENA_HALF,
 };
+
+// --- Obstacle AABBs (must match arena.ts obstacle positions) ---
+import type { AABB } from '../../shared/simulation/step';
+const OBSTACLES: AABB[] = [
+  // Central cover: { x: 0, z: 0, w: 3, h: 2, d: 3 }
+  { minX: -1.5, maxX: 1.5, minY: 0, maxY: 2, minZ: -1.5, maxZ: 1.5 },
+  // { x: 6, z: 6, w: 2, h: 2.5, d: 2 }
+  { minX: 5, maxX: 7, minY: 0, maxY: 2.5, minZ: 5, maxZ: 7 },
+  // { x: -6, z: 6, w: 2, h: 2.5, d: 2 }
+  { minX: -7, maxX: -5, minY: 0, maxY: 2.5, minZ: 5, maxZ: 7 },
+  // { x: 6, z: -6, w: 2, h: 2.5, d: 2 }
+  { minX: 5, maxX: 7, minY: 0, maxY: 2.5, minZ: -7, maxZ: -5 },
+  // { x: -6, z: -6, w: 2, h: 2.5, d: 2 }
+  { minX: -7, maxX: -5, minY: 0, maxY: 2.5, minZ: -7, maxZ: -5 },
+  // Corner cover: { x: 12, z: 12, w: 3, h: 1.5, d: 1.5 }
+  { minX: 10.5, maxX: 13.5, minY: 0, maxY: 1.5, minZ: 11.25, maxZ: 12.75 },
+  // { x: -12, z: 12, w: 3, h: 1.5, d: 1.5 }
+  { minX: -13.5, maxX: -10.5, minY: 0, maxY: 1.5, minZ: 11.25, maxZ: 12.75 },
+  // { x: 12, z: -12, w: 3, h: 1.5, d: 1.5 }
+  { minX: 10.5, maxX: 13.5, minY: 0, maxY: 1.5, minZ: -12.75, maxZ: -11.25 },
+  // { x: -12, z: -12, w: 3, h: 1.5, d: 1.5 }
+  { minX: -13.5, maxX: -10.5, minY: 0, maxY: 1.5, minZ: -12.75, maxZ: -11.25 },
+  // Mid-edge: { x: 10, z: 0, w: 1.5, h: 2, d: 4 }
+  { minX: 9.25, maxX: 10.75, minY: 0, maxY: 2, minZ: -2, maxZ: 2 },
+  // { x: -10, z: 0, w: 1.5, h: 2, d: 4 }
+  { minX: -10.75, maxX: -9.25, minY: 0, maxY: 2, minZ: -2, maxZ: 2 },
+  // { x: 0, z: 10, w: 4, h: 2, d: 1.5 }
+  { minX: -2, maxX: 2, minY: 0, maxY: 2, minZ: 9.25, maxZ: 10.75 },
+  // { x: 0, z: -10, w: 4, h: 2, d: 1.5 }
+  { minX: -2, maxX: 2, minY: 0, maxY: 2, minZ: -10.75, maxZ: -9.25 },
+];
 
 // --- DOM refs ---
 const fpsEl = document.getElementById('fps-counter')!;
@@ -102,6 +133,10 @@ let started = false;
 let paused = false;
 let tabOpen = false;
 let kills = 0;
+
+// Semi-auto fire: edge-triggered per click, with fire-rate cap
+let fireCooldown = 0; // seconds until next shot allowed
+const FIRE_COOLDOWN_S = 60 / FIRE_RATE_RPM; // ~0.167s per shot at 360 RPM
 
 // Fixed timestep accumulator
 let simAccum = 0;
@@ -289,16 +324,19 @@ function renderLoop(now: number): void {
     if (inputSource) {
       const input = inputSource.poll();
 
-      // Fire handling
-      if (input.buttons & 4 && !reloading && ammo > 0) {
-        ammo--;
-        showHitMarker();
-        // Recoil pitch
-        player.pitch += 0.02;
-      }
+    // Semi-auto fire: edge-triggered on press, fire-rate capped
+    fireCooldown -= TICK_DT;
+    if (fireCooldown < 0) fireCooldown = 0;
+    if (inputSource.getFirePressed() && !reloading && ammo > 0 && fireCooldown <= 0) {
+      ammo--;
+      fireCooldown = FIRE_COOLDOWN_S;
+      // Recoil kick
+      player.pitch += 0.02;
+      // Hitmarker is NOT shown here — only on confirmed hit (M2+ dummy raycast, M6+ server confirmation)
+    }
 
-      // Reload
-      if (input.buttons & 8 && !reloading && ammo < MAG_SIZE) {
+      // Reload (edge-triggered)
+      if (inputSource.getReloadPressed() && !reloading && ammo < MAG_SIZE) {
         reloading = true;
         reloadTimer = 1.6;
       }
@@ -311,7 +349,7 @@ function renderLoop(now: number): void {
         }
       }
 
-      playerStep(player, input, TICK_DT, WORLD_BOUNDS);
+      playerStep(player, input, TICK_DT, WORLD_BOUNDS, OBSTACLES);
     }
     simAccum -= TICK_DT;
   }
@@ -319,8 +357,8 @@ function renderLoop(now: number): void {
   // --- Update camera from player sim ---
   camera.position.set(player.pos.x, player.pos.y, player.pos.z);
   camera.rotation.order = 'YXZ';
-  camera.rotation.y = -player.yaw;
-  camera.rotation.x = -player.pitch;
+  camera.rotation.y = player.yaw;
+  camera.rotation.x = player.pitch;
 
   // --- Update HUD ---
   updateHUD();

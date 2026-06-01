@@ -1,10 +1,11 @@
 import type { InputFrame, InputSource } from '../../shared/types';
 import { clamp, degToRad } from '../../shared/math';
+import { ButtonFlags } from '../../shared/types';
 
-const BUTTON_JUMP = 1;
-const BUTTON_CROUCH = 2;
-const BUTTON_FIRE = 4;
-const BUTTON_RELOAD = 8;
+const BUTTON_JUMP = ButtonFlags.JUMP;
+const BUTTON_CROUCH = ButtonFlags.CROUCH;
+const BUTTON_FIRE = ButtonFlags.FIRE;
+const BUTTON_RELOAD = ButtonFlags.RELOAD;
 
 /**
  * Keyboard + Mouse input source.
@@ -32,6 +33,8 @@ export class KeyboardMouseSource implements InputSource {
   // Buttons pressed this frame (for one-shot actions like fire)
   private firePressed = false;
   private reloadPressed = false;
+  private prevMouseButtons = 0;
+  private prevReloadKey = false;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -98,7 +101,31 @@ export class KeyboardMouseSource implements InputSource {
     this.pitch = clamp(this.pitch, -Math.PI / 2 + 0.01, Math.PI / 2 - 0.01);
   };
 
+  /**
+   * True if the fire button was just pressed this frame (rising edge).
+   * Used for semi-auto: one shot per click, not while held.
+   */
+  getFirePressed(): boolean {
+    return this.firePressed;
+  }
+
+  /**
+   * True if the reload button was just pressed this frame (rising edge).
+   */
+  getReloadPressed(): boolean {
+    return this.reloadPressed;
+  }
+
   poll(): InputFrame {
+    // Edge detection: compare current vs previous mouse buttons
+    const firedThisFrame = !!(this.mouseButtons & 1) && !(this.prevMouseButtons & 1);
+    const reloadedThisFrame = this.keys.has('KeyR') && !this.prevReloadKey;
+
+    this.firePressed = firedThisFrame;
+    this.reloadPressed = reloadedThisFrame;
+    this.prevMouseButtons = this.mouseButtons;
+    this.prevReloadKey = this.keys.has('KeyR');
+
     // Movement
     let moveX = 0;
     let moveZ = 0;

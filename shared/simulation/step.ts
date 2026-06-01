@@ -29,9 +29,76 @@ export interface Vec3 {
   z: number;
 }
 
+export interface AABB {
+  minX: number; maxX: number;
+  minY: number; maxY: number;
+  minZ: number; maxZ: number;
+}
+
 // Scratch vectors to avoid allocation
 const _dir = { x: 0, y: 0, z: 0 };
 const _inputDir = { x: 0, y: 0, z: 0 };
+const _pushDir = { x: 0, y: 0, z: 0 };
+
+/**
+ * Resolve capsule-vs-AABB collision.
+ * Treats the player as a vertical capsule (swept to previous position) and pushes them
+ * out of penetration along the minimum translation vector.
+ * This is a simplified but effective approach for box obstacles.
+ */
+function resolveCapsuleAABB(
+  p: PlayerSim,
+  aabb: AABB,
+  radius: number,
+  _dt: number
+): void {
+  // Capsule center is at eye height; feet are at pos.y - eyeHeight
+  const feetY = p.pos.y - p.eyeHeight;
+  const topY = feetY + p.eyeHeight + 0.1; // slight margin above head
+  const bottomY = feetY - 0.1; // slight margin below feet
+
+  // Clamp capsule center to AABB expanded by radius on X/Z
+  const cx = clamp(p.pos.x, aabb.minX - radius, aabb.maxX + radius);
+  const cz = clamp(p.pos.z, aabb.minZ - radius, aabb.maxZ + radius);
+
+  // Check if capsule overlaps AABB in Y
+  const yOverlap = topY > aabb.minY && bottomY < aabb.maxY;
+  if (!yOverlap) return;
+
+  // Distance from capsule center to closest point on AABB in XZ
+  const closestX = clamp(p.pos.x, aabb.minX, aabb.maxX);
+  const closestZ = clamp(p.pos.z, aabb.minZ, aabb.maxZ);
+
+  const dx = p.pos.x - closestX;
+  const dz = p.pos.z - closestZ;
+  const distXZ = Math.sqrt(dx * dx + dz * dz);
+
+  // No collision if capsule center is far enough from AABB
+  if (distXZ >= radius || distXZ < 0.0001) return;
+
+  // Penetration depth
+  const penetration = radius - distXZ;
+
+  // Push direction (away from closest point)
+  if (distXZ < 0.0001) {
+    // Capsule center is directly above/below AABB — push up
+    p.pos.y += Math.max(0, aabb.maxY - topY) > 0 ? 0 : penetration;
+    return;
+  }
+
+  const pushX = (dx / distXZ) * penetration;
+  const pushZ = (dz / distXZ) * penetration;
+
+  p.pos.x += pushX;
+  p.pos.z += pushZ;
+
+  // Kill velocity component in push direction (prevent sliding into walls)
+  const dot = p.vel.x * (dx / distXZ) + p.vel.z * (dz / distXZ);
+  if (dot < 0) {
+    p.vel.x -= dot * (dx / distXZ);
+    p.vel.z -= dot * (dz / distXZ);
+  }
+}
 
 /**
  * Single fixed-timestep simulation step for one player.
@@ -42,7 +109,8 @@ export function playerStep(
   p: PlayerSim,
   input: InputFrame,
   dt: number,
-  worldBounds: { minY: number; maxY: number; minX: number; maxX: number; minZ: number; maxZ: number }
+  worldBounds: { minY: number; maxY: number; minX: number; maxX: number; minZ: number; maxZ: number },
+  obstacles: AABB[] = []
 ): void {
   // --- Update yaw/pitch from input ---
   p.yaw = input.yaw;
@@ -143,4 +211,11 @@ export function playerStep(
   // --- Arena bounds ---
   p.pos.x = clamp(p.pos.x, worldBounds.minX + PLAYER_RADIUS, worldBounds.maxX - PLAYER_RADIUS);
   p.pos.z = clamp(p.pos.z, worldBounds.minZ + PLAYER_RADIUS, worldBounds.maxZ - PLAYER_RADIUS);
+
+  // --- Obstacle collision (capsule-vs-AABB, iterative resolve) ---
+  for (let iter = 0; iter < 3; iter++) {
+    for (let i = 0; i < obstacles.length; i++) {
+      resolveCapsuleAABB(p, obstacles[i], PLAYER_RADIUS, dt);
+    }
+  }
 }
