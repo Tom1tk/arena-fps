@@ -49,6 +49,19 @@ export const W_VISIBLE = 1000;
 export const W_RECENT = 50;
 export const RECENT_SPAWN_WINDOW = 2;
 
+// Authored spawn points (8 positions around the 40x40 arena)
+import type { SpawnPoint } from '../shared/types';
+export const SPAWN_POSITIONS: SpawnPoint[] = [
+  { pos: { x: -15, y: 1.6, z: -15 }, yaw: 0.79 },    // SW corner
+  { pos: { x: 15, y: 1.6, z: -15 }, yaw: 2.36 },     // SE corner
+  { pos: { x: -15, y: 1.6, z: 15 }, yaw: -2.36 },    // NW corner
+  { pos: { x: 15, y: 1.6, z: 15 }, yaw: -0.79 },     // NE corner
+  { pos: { x: 0, y: 1.6, z: -17 }, yaw: 0 },         // South mid
+  { pos: { x: 0, y: 1.6, z: 17 }, yaw: Math.PI },    // North mid
+  { pos: { x: -17, y: 1.6, z: 0 }, yaw: -Math.PI/2 }, // West mid
+  { pos: { x: 17, y: 1.6, z: 0 }, yaw: Math.PI/2 },  // East mid
+];
+
 // --- Networking ---
 export const SERVER_TICK_HZ = 30; // must also work at 60
 export const TICK_DT = 1 / SERVER_TICK_HZ;

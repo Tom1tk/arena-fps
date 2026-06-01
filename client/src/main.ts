@@ -4,6 +4,7 @@ import type { GraphicsQuality } from '../../shared/types';
 import {
   TICK_DT, PLAYER_MAX_HP, MAG_SIZE, PLAYER_RADIUS, FIRE_RATE_RPM,
   DAMAGE_BODY, DAMAGE_HEAD, HITSCAN_MAX_RANGE, SPREAD_RAD, RELOAD_TIME_S,
+  KILL_GOAL, POST_MATCH_DURATION_S, RESPAWN_DELAY_S, SPAWN_POSITIONS,
 } from '../../shared/constants';
 import { playerStep, type PlayerSim } from '../../shared/simulation/step';
 import { clamp } from '../../shared/math';
@@ -11,10 +12,11 @@ import { createArena } from './arena';
 import { FPSCounter } from './fpsCounter';
 import { SettingsStore } from './settingsStore';
 import { KeyboardMouseSource } from './inputSource';
-import { createDummyTargets, type DummyTarget, raycastHitscan } from './hitscan';
+import { createDummyTargets, type DummyTarget, raycastHitscan, BOT_DAMAGE } from './hitscan';
 import { ViewModel } from './viewmodel';
 import { playShoot, playReload, playKill } from './audio';
-import type { InputFrame } from '../../shared/types';
+import { selectSpawnPoint } from '../../shared/spawn-selection';
+import type { InputFrame, SpawnPoint } from '../../shared/types';
 
 // --- Arena bounds for collision ---
 const ARENA_HALF = 20;
@@ -71,6 +73,13 @@ const ammoDisplay = document.getElementById('ammo-display')!;
 const crosshairEl = document.getElementById('crosshair')!;
 const killFeedEl = document.getElementById('kill-feed')!;
 const scoreboardEl = document.getElementById('scoreboard')!;
+const deathOverlay = document.getElementById('death-overlay')!;
+const deathInfo = document.getElementById('death-info')!;
+const deathCountdown = document.getElementById('death-countdown')!;
+const postMatchOverlay = document.getElementById('post-match-overlay')!;
+const postMatchStats = document.getElementById('post-match-stats')!;
+const postMatchCountdown = document.getElementById('post-match-countdown')!;
+const damageIndicator = document.getElementById('damage-indicator')!;
 
 // --- Settings ---
 const settings = SettingsStore.getInstance();
@@ -140,6 +149,28 @@ let started = false;
 let paused = false;
 let tabOpen = false;
 let kills = 0;
+let playerDeaths = 0;
+
+// --- M3: Match state ---
+type MatchPhase = 'playing' | 'post_match';
+let matchPhase: MatchPhase = 'playing';
+let postMatchTimer = 0;
+let isDead = false;
+let playerRespawnTimer = 0;
+let killerName = '';
+let headshotKill = false;
+let recentSpawns: Array<{ pos: { x: number; y: number; z: number }; time: number }> = [];
+
+// Kill feed
+interface KillFeedEntry {
+  killer: string;
+  victim: string;
+  headshot: boolean;
+  time: number;
+}
+let killFeed: KillFeedEntry[] = [];
+const KILL_FEED_MAX = 8;
+let killFeedTimer = 0; // how long entries stay visible (s)
 
 // Semi-auto fire: edge-triggered per click, with fire-rate cap
 let fireCooldown = 0; // seconds until next shot allowed
@@ -253,7 +284,18 @@ leaveBtn.addEventListener('click', () => {
 
 function updateTabScoreboard(): void {
   const tbody = document.getElementById('tab-sb-body')!;
-  tbody.innerHTML = `<tr><td>1</td><td>You</td><td>${kills}</td><td>0</td></tr>`;
+  tbody.innerHTML = `<tr><td>1</td><td>You</td><td>${kills}</td><td>${playerDeaths}</td></tr>`;
+}
+
+function updateTabScoreboardM3(): void {
+  const tbody = document.getElementById('tab-sb-body')!;
+  let rows = `<tr><td>1</td><td>You</td><td>${kills}</td><td>${playerDeaths}</td></tr>`;
+  // Add bot entries sorted by kills
+  const bots = dummyTargets.map(t => ({ name: t.name, k: t.kills, d: t.deaths }));
+  for (const b of bots) {
+    rows += `<tr><td>-</td><td>${b.name}</td><td>${b.k}</td><td>${b.d}</td></tr>`;
+  }
+  tbody.innerHTML = rows;
 }
 
 // --- Crosshair update from settings ---
@@ -301,6 +343,133 @@ function showHitMarker(): void {
   hitMarkerTimer = 0.15;
 }
 
+// --- M3: Kill feed ---
+function addKillFeedEntry(killer: string, victim: string, headshot: boolean): void {
+  killFeed.push({ killer, victim, headshot, time: performance.now() / 1000 });
+  if (killFeed.length > KILL_FEED_MAX) killFeed.shift();
+  killFeedTimer = 5; // entries fade after 5s
+}
+
+function updateKillFeedUI(): void {
+  const now = performance.now() / 1000;
+  const lines = killFeed
+    .filter(e => now - e.time < killFeedTimer)
+    .map(e => `<div style="color:${e.killer === 'You' ? '#8f8' : '#faa'}">${e.headshot ? '✦ ' : ''}${e.killer} → ${e.victim}</div>`).join('');
+  killFeedEl.innerHTML = lines;
+}
+
+// --- M3: Match state ---
+function startPostMatch(): void {
+  matchPhase = 'post_match';
+  postMatchTimer = POST_MATCH_DURATION_S;
+}
+
+function resetMatch(): void {
+  matchPhase = 'playing';
+  postMatchTimer = 0;
+  kills = 0;
+  playerDeaths = 0;
+  hp = PLAYER_MAX_HP;
+  ammo = MAG_SIZE;
+  reloading = false;
+  isDead = false;
+  playerRespawnTimer = 0;
+  killFeed = [];
+  recentSpawns = [];
+  // Reset all bots
+  for (const t of dummyTargets) {
+    t.hp = PLAYER_MAX_HP;
+    t.alive = true;
+    t.deaths = 0;
+    t.kills = 0;
+    t.resetVisuals();
+    // Respawn bots at new positions
+    const spawn = SPAWN_POSITIONS[Math.floor(Math.random() * SPAWN_POSITIONS.length)];
+    t.setPosition(spawn.pos.x, spawn.pos.z);
+  }
+  // Smart spawn player
+  spawnPlayer(performance.now() / 1000);
+}
+
+function spawnPlayer(now: number): void {
+  const allPlayers: Array<{ pos: { x: number; y: number; z: number }; yaw: number }> = [];
+  for (const t of dummyTargets) {
+    if (t.alive) {
+      allPlayers.push({
+        pos: { x: t.group.position.x, y: t.group.position.y, z: t.group.position.z },
+        yaw: 0,
+      });
+    }
+  }
+  const spawn = selectSpawnPoint(allPlayers, recentSpawns, now);
+  player.pos.x = spawn.pos.x;
+  player.pos.y = spawn.pos.y;
+  player.pos.z = spawn.pos.z;
+  if (inputSource) {
+    inputSource.setAngles(spawn.yaw, 0);
+  }
+  prevPos.x = player.pos.x;
+  prevPos.y = player.pos.y;
+  prevPos.z = player.pos.z;
+  renderPos.x = player.pos.x;
+  renderPos.y = player.pos.y;
+  renderPos.z = player.pos.z;
+  hp = PLAYER_MAX_HP;
+  ammo = MAG_SIZE;
+  reloading = false;
+  isDead = false;
+  recentSpawns.push({ pos: { ...player.pos }, time: now });
+}
+
+// --- M3: Player death ---
+function onPlayerDeath(killer: string, hs: boolean): void {
+  isDead = true;
+  playerRespawnTimer = RESPAWN_DELAY_S;
+  killerName = killer;
+  headshotKill = hs;
+  playerDeaths++;
+  addKillFeedEntry(killer, 'You', hs);
+  // Show death overlay
+  deathOverlay.style.display = 'flex';
+  deathInfo.textContent = `${killer}${hs ? ' [HS]' : ''} eliminated you`;
+}
+
+function respawnPlayer(now: number): void {
+  spawnPlayer(now);
+  deathOverlay.style.display = 'none';
+}
+
+// --- M3: Damage indicator ---
+let damageFlashTimer = 0;
+function showDamageIndicator(): void {
+  damageIndicator.style.borderColor = 'rgba(255,0,0,0.6)';
+  damageFlashTimer = 0.15;
+}
+
+function updateOverlays(dt: number): void {
+  // Death overlay countdown
+  if (isDead) {
+    deathCountdown.textContent = `Respawning in ${Math.ceil(playerRespawnTimer)}s...`;
+  }
+
+  // Post-match overlay
+  if (matchPhase === 'post_match') {
+    postMatchOverlay.style.display = 'flex';
+    postMatchStats.innerHTML = `Kills: ${kills} | Deaths: ${playerDeaths}<br>K/D: ${(kills / Math.max(1, playerDeaths)).toFixed(1)}`;
+    postMatchCountdown.textContent = `New match in ${Math.ceil(postMatchTimer)}s...`;
+  } else {
+    postMatchOverlay.style.display = 'none';
+  }
+
+  // Damage indicator decay
+  if (damageFlashTimer > 0) {
+    damageFlashTimer -= dt;
+    if (damageFlashTimer <= 0) {
+      damageIndicator.style.borderColor = 'rgba(255,0,0,0)';
+    }
+  }
+}
+
 // --- Start ---
 startBtn.addEventListener('click', () => {
   titleOverlay.style.display = 'none';
@@ -322,13 +491,22 @@ startBtn.addEventListener('click', () => {
   hp = PLAYER_MAX_HP;
   ammo = MAG_SIZE;
   kills = 0;
+  playerDeaths = 0;
   recoilPitch = 0;
+  isDead = false;
+  matchPhase = 'playing';
+  postMatchTimer = 0;
+  killFeed = [];
+  recentSpawns = [];
 
   // --- M2: Create dummy targets ---
   dummyTargets = createDummyTargets(5, ARENA_HALF);
   for (const t of dummyTargets) {
     scene.add(t.group);
   }
+
+  // --- M3: Smart spawn ---
+  spawnPlayer(performance.now() / 1000);
 
   // --- M2: Collect obstacle meshes for raycast occlusion ---
   obstacleMeshes = [];
@@ -412,7 +590,7 @@ function renderLoop(now: number): void {
 
           if (hit.target) {
             const damage = hit.isHead ? DAMAGE_HEAD : DAMAGE_BODY;
-            hit.target.takeDamage(damage);
+            hit.target.hp -= damage;
 
             // Show hit marker on confirmed hit
             showHitMarker();
@@ -425,8 +603,16 @@ function renderLoop(now: number): void {
 
             // Check kill
             if (hit.target.hp <= 0) {
+              hit.target.die();
               kills++;
+              hit.target.kills = 0; // bots don't get kills in FFA
+              addKillFeedEntry('You', hit.target.name, hit.isHead);
               playKill();
+
+              // Check match end
+              if (kills >= KILL_GOAL && matchPhase === 'playing') {
+                startPostMatch();
+              }
             }
           } else {
             // Miss — still play shoot sound
@@ -484,10 +670,55 @@ function renderLoop(now: number): void {
   const isMoving = cachedInput ? (cachedInput.moveX !== 0 || cachedInput.moveZ !== 0) : false;
   viewmodel?.update(frameDt, isMoving);
 
-  // --- M2: Update dummy targets (respawn timers) ---
-  for (const t of dummyTargets) {
-    t.update(frameDt);
+  // --- M2: Update dummy targets (respawn timers + bot damage) ---
+  // Bot damage to player (M3)
+  if (matchPhase === 'playing' && !isDead) {
+    for (const t of dummyTargets) {
+      const dmg = t.update(frameDt, player.pos);
+      if (dmg > 0) {
+        hp -= dmg;
+        showDamageIndicator();
+        if (hp <= 0) {
+          hp = 0;
+          onPlayerDeath(t.name, false);
+        }
+      }
+    }
+
+    // Player respawn countdown
+    if (isDead) {
+      playerRespawnTimer -= frameDt;
+      if (playerRespawnTimer <= 0) {
+        respawnPlayer(performance.now() / 1000);
+      }
+    }
   }
+
+  // --- M3: Post-match countdown ---
+  if (matchPhase === 'post_match') {
+    postMatchTimer -= frameDt;
+    if (postMatchTimer <= 0) {
+      resetMatch();
+    }
+  }
+
+  // --- M3: Kill feed update ---
+  killFeedTimer = Math.max(0, killFeedTimer - frameDt);
+  updateKillFeedUI();
+
+  // --- M3: Update scoreboard ---
+  const sbText = `K: ${kills} | D: ${playerDeaths} | Goal: ${KILL_GOAL}`;
+  if (scoreboardEl.textContent !== sbText) {
+    scoreboardEl.textContent = sbText;
+  }
+
+  // --- M3: Update tab scoreboard with bot entries ---
+  if (tabOpen) {
+    updateTabScoreboardM3();
+  }
+
+  // --- M3: Update overlays (death, post-match, damage flash) ---
+  updateOverlays(frameDt);
 
   // --- Render (timed) ---
   const renderStart = performance.now();

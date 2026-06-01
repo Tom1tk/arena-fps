@@ -13,6 +13,9 @@ import {
   RESPAWN_DELAY_S,
 } from '../../shared/constants';
 
+// --- Bot damage to player ---
+export const BOT_DAMAGE = 8; // damage per bot tick attack
+
 // --- Types ---
 
 export interface HitResult {
@@ -32,6 +35,7 @@ const _spreadDir = new THREE.Vector3();
 // --- Dummy Target ---
 
 export class DummyTarget {
+  name: string;
   group: THREE.Group;
   bodyMesh: THREE.Mesh;
   headMesh: THREE.Mesh;
@@ -39,12 +43,28 @@ export class DummyTarget {
   hp = PLAYER_MAX_HP;
   alive = true;
   respawnTimer = 0;
+  kills = 0;
+  deaths = 0;
+
+  // Bot behavior
+  attackCooldown = 0; // seconds until next attack
+  private _attackRate = 1.5; // attacks per second
 
   private _bodyMat: THREE.MeshBasicMaterial;
   private _headMat: THREE.MeshBasicMaterial;
   private _labelMat: THREE.SpriteMaterial;
 
-  constructor() {
+  /** Reset visual state (used by match reset). */
+  resetVisuals(): void {
+    this._bodyMat.color.setHex(0xdd6633);
+    this._headMat.color.setHex(0xcc4422);
+    this._bodyMat.opacity = 0.7;
+    this._headMat.opacity = 0.7;
+    this._labelMat.opacity = 0.9;
+  }
+
+  constructor(name: string) {
+    this.name = name;
     // Body: box approximating a capsule (0.5m wide, 1.3m tall)
     const bodyGeo = new THREE.BoxGeometry(0.5, 1.3, 0.3);
     this._bodyMat = new THREE.MeshBasicMaterial({ color: 0xdd6633, transparent: true, opacity: 0.7 });
@@ -80,7 +100,11 @@ export class DummyTarget {
     this.group.position.set(x, 0, z);
   }
 
-  update(dt: number): void {
+  /**
+   * Update target state.
+   * Returns BOT_DAMAGE if this bot should deal damage to the player this tick, 0 otherwise.
+   */
+  update(dt: number, playerPos?: { x: number; y: number; z: number }): number {
     if (!this.alive) {
       this.respawnTimer -= dt;
       if (this.respawnTimer <= 0) {
@@ -92,24 +116,37 @@ export class DummyTarget {
         this._headMat.opacity = 0.7;
         this._labelMat.opacity = 0.9;
       }
+      this._updateLabel();
+      return 0;
     }
+
+    // Bot attacks player if nearby
+    let damageDealt = 0;
+    this.attackCooldown -= dt;
+    if (this.attackCooldown <= 0 && playerPos) {
+      this.attackCooldown = 1 / this._attackRate;
+      const dx = playerPos.x - this.group.position.x;
+      const dz = playerPos.z - this.group.position.z;
+      const dist = Math.sqrt(dx * dx + dz * dz);
+      if (dist < 15) { // attack range
+        damageDealt = BOT_DAMAGE;
+      }
+    }
+
     this._updateLabel();
+    return damageDealt;
   }
 
-  takeDamage(amount: number): void {
-    if (!this.alive) return;
-    this.hp -= amount;
-    if (this.hp <= 0) {
-      this.hp = 0;
-      this.alive = false;
-      this.respawnTimer = RESPAWN_DELAY_S;
-      // Visual: turn gray/transparent on death
-      this._bodyMat.color.setHex(0x555555);
-      this._headMat.color.setHex(0x444444);
-      this._bodyMat.opacity = 0.3;
-      this._headMat.opacity = 0.3;
-      this._labelMat.opacity = 0.3;
-    }
+  die(): void {
+    this.deaths++;
+    this.alive = false;
+    this.respawnTimer = RESPAWN_DELAY_S;
+    // Visual: turn gray/transparent on death
+    this._bodyMat.color.setHex(0x555555);
+    this._headMat.color.setHex(0x444444);
+    this._bodyMat.opacity = 0.3;
+    this._headMat.opacity = 0.3;
+    this._labelMat.opacity = 0.3;
   }
 
   private _updateLabel(): void {
@@ -225,9 +262,10 @@ export function createDummyTargets(
   const targets: DummyTarget[] = [];
   const minDist = 3; // minimum distance between targets
   const margin = 3; // keep away from walls
+  const botNames = ['Viper', 'Ghost', 'Raptor', 'Shadow', 'Hawk', 'Wolf', 'Cobra', 'Fang'];
 
   for (let i = 0; i < count; i++) {
-    const target = new DummyTarget();
+    const target = new DummyTarget(botNames[i % botNames.length]);
     let placed = false;
     let attempts = 0;
     while (!placed && attempts < 100) {

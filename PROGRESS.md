@@ -3,7 +3,7 @@
 > Source of truth: `fps-project-plan.md`
 > This file tracks milestone completion against the plan's Definition of Done (DoD).
 
-## Current Status: **M2 — Complete (Hitscan + ViewModel + Audio live)**
+## Current Status: **M3 — In Progress (Match rules, bot damage, death/respawn live)**
 
 ---
 
@@ -79,9 +79,26 @@
 - [x] New files: `client/src/hitscan.ts`, `client/src/viewmodel.ts`, `client/src/audio.ts`
 
 ## M3 — Game Rules *(blocked until M2 DoD met)*
-- [ ] Death/respawn, kills, scoreboard
-- [ ] FFA to 30, tie handling, post-match
-- [ ] Smart spawn selection
+- [x] Death/respawn, kills, scoreboard
+  - Player takes damage from nearby bots (BOT_DAMAGE=8, ~1.5 attacks/sec)
+  - Death screen overlay with countdown, auto-respawn after RESPAWN_DELAY_S (3s)
+  - Player death tracked (playerDeaths counter)
+  - Smart spawn: `selectSpawnPoint()` maximizes distance from alive players, avoids recent spawns
+  - SPAWN_POSITIONS defined in constants (8 spawn points around arena)
+- [x] FFA to 30, tie handling, post-match
+  - Match phase machine: 'playing' → 'post_match' → auto-reset after 15s
+  - Kill goal: KILL_GOAL=30, triggers post-match when reached
+  - Post-match overlay shows K/D stats, countdown to next match
+  - resetMatch() clears all state, respawns bots, spawns player
+- [x] Smart spawn selection
+  - `shared/spawn-selection.ts`: weighted scoring (distance + line-of-sight + recency)
+  - SPAWN_POSITIONS in constants with pre-computed yaw angles toward center
+- [x] Kill feed (top-right, up to 8 entries, 5s fade)
+- [x] Scoreboard (top-left: K/D/Goal, Tab: full scoreboard with bot entries)
+- [x] Death overlay ("YOU DIED" + killer info + respawn countdown)
+- [x] Post-match overlay ("MATCH COMPLETE" + stats + countdown)
+- [x] Damage indicator (red screen-edge flash when hit)
+- [x] New files: `shared/spawn-selection.ts`
 
 ## M4 — Menu & Settings *(blocked until M3 DoD met)*
 - [ ] Name gate, main menu, settings UI
