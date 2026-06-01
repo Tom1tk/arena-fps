@@ -360,16 +360,20 @@ function renderLoop(now: number): void {
   camera.rotation.y = player.yaw;
   camera.rotation.x = player.pitch;
 
-  // --- Update HUD ---
-  updateHUD();
-  updateCrosshair();
-
-  // --- Debug line ---
-  const ping = '—';
-  debugEl.textContent = `${isWebGPU ? 'WebGPU' : 'WebGL2'} | ping: ${ping}ms | tick: 30Hz`;
-
-  // --- Scoreboard ---
-  scoreboardEl.textContent = `K: ${kills}`;
+  // --- Update HUD (throttled: only when values actually change) ---
+  const hpPct = Math.round((hp / PLAYER_MAX_HP) * 100);
+  if (hpFill.dataset.lastHp !== String(hpPct)) {
+    hpFill.style.width = `${hpPct}%`;
+    hpFill.style.background = hp > 60 ? '#0c0' : hp > 30 ? '#cc0' : '#c00';
+    hpFill.dataset.lastHp = String(hpPct);
+  }
+  const ammoText = reloading ? 'Reloading...' : `${ammo} / ∞`;
+  if (ammoDisplay.textContent !== ammoText) {
+    ammoDisplay.textContent = ammoText;
+  }
+  if (scoreboardEl.textContent !== `K: ${kills}`) {
+    scoreboardEl.textContent = `K: ${kills}`;
+  }
 
   // --- Render ---
   renderer.render(scene, camera);
