@@ -122,7 +122,7 @@
     #tab-scoreboard th { color: #888; font-weight: normal; }
     #tab-scoreboard td:last-child { text-align: right; }
 
-    /* Title / Enter screen */
+    /* Title / Lobby screen */
     #title-overlay {
       position: fixed; inset: 0; z-index: 400;
       display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -130,12 +130,52 @@
     }
     #title-overlay h1 { font-size: 3rem; margin-bottom: 0.5rem; letter-spacing: 0.1em; }
     #title-overlay p { color: #888; margin-bottom: 0.5rem; font-size: 1rem; }
-    #title-overlay .controls { color: #666; margin-bottom: 2rem; font-size: 0.85rem; line-height: 1.8; text-align: center; }
+    #title-overlay .controls { color: #666; margin-bottom: 1rem; font-size: 0.85rem; line-height: 1.8; text-align: center; }
     #title-overlay button {
-      padding: 12px 40px; font-size: 1.2rem; border: none; border-radius: 6px;
+      padding: 8px 24px; font-size: 1rem; border: none; border-radius: 6px;
       background: #2a6; color: #fff; cursor: pointer;
     }
     #title-overlay button:hover { background: #3b7; }
+    #title-overlay button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    /* Lobby panel */
+    #lobby-panel {
+      display: none; flex-direction: column; align-items: center; width: 440px;
+      margin-top: 16px;
+    }
+    #lobby-panel.visible { display: flex; }
+    #lobby-code-display {
+      font: bold 36px monospace; color: #ff0; letter-spacing: 0.3em; margin: 8px 0;
+      text-shadow: 0 0 12px rgba(255,255,0,0.4);
+    }
+    #lobby-roster {
+      width: 100%; margin: 8px 0; font: 14px monospace;
+    }
+    #lobby-roster table { width: 100%; border-collapse: collapse; }
+    #lobby-roster th, #lobby-roster td { padding: 4px 8px; text-align: left; border-bottom: 1px solid #333; }
+    #lobby-roster th { color: #888; }
+    #lobby-roster .ready-icon { color: #0f0; }
+    #lobby-roster .not-ready-icon { color: #666; }
+    #lobby-status {
+      font: 13px monospace; color: #aaa; margin: 4px 0; text-align: center;
+    }
+    #lobby-error {
+      font: 13px monospace; color: #f66; margin: 4px 0; text-align: center; min-height: 18px;
+    }
+    #lobby-buttons {
+      display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; justify-content: center;
+    }
+    #lobby-buttons button {
+      padding: 8px 20px; font-size: 0.9rem;
+    }
+    #lobby-join-row {
+      display: flex; gap: 8px; align-items: center; margin-top: 8px;
+    }
+    #lobby-join-row input {
+      padding: 6px 12px; font-size: 16px; font-family: monospace;
+      background: #222; color: #fff; border: 1px solid #444; border-radius: 4px;
+      text-align: center; width: 120px; text-transform: uppercase; letter-spacing: 0.2em;
+    }
 
     /* Hit marker */
     #hit-marker {
@@ -189,13 +229,13 @@
     </table>
   </div>
 
-  <!-- Title screen -->
+  <!-- Title / Lobby screen -->
   <div id="title-overlay">
     <h1>ARENA FPS</h1>
     <p>Browser Free-For-All</p>
 
     <!-- Name gate -->
-    <div style="margin-bottom:20px; text-align:center;">
+    <div style="margin-bottom:12px; text-align:center;">
       <label for="player-name" style="color:#aaa; font-size:14px;">Callsign</label><br>
       <input id="player-name" type="text" placeholder="Enter name (3–20 chars)" maxlength="20"
         style="margin-top:6px; padding:8px 16px; font-size:16px; font-family:monospace;
@@ -204,8 +244,8 @@
       <div id="name-error" style="color:#f66; font-size:12px; margin-top:4px; min-height:16px;"></div>
     </div>
 
-    <!-- Settings panel -->
-    <div id="menu-settings" style="margin-bottom:24px; display:grid; grid-template-columns:1fr 1fr; gap:12px; width:400px;">
+    <!-- Settings panel (collapsible) -->
+    <div id="menu-settings" style="margin-bottom:16px; display:grid; grid-template-columns:1fr 1fr; gap:12px; width:400px;">
       <div>
         <label style="color:#aaa; font-size:12px;">Sensitivity</label><br>
         <input id="menu-sensitivity" type="range" min="1" max="20" step="0.5" value="10"
@@ -251,7 +291,33 @@
       Space — Jump &nbsp;|&nbsp; Ctrl — Crouch &nbsp;|&nbsp; R — Reload<br>
       Esc — Pause &nbsp;|&nbsp; Tab — Scoreboard
     </div>
-    <button id="start-btn" style="opacity:0.4; pointer-events:none;">ENTER ARENA</button>
+
+    <!-- Lobby panel (shown after connecting) -->
+    <div id="lobby-panel">
+      <div id="lobby-code-display"></div>
+      <div id="lobby-roster">
+        <table>
+          <thead><tr><th>Name</th><th>Ready</th><th>Role</th></tr></thead>
+          <tbody id="lobby-roster-body"></tbody>
+        </table>
+      </div>
+      <div id="lobby-status"></div>
+      <div id="lobby-error"></div>
+      <div id="lobby-buttons">
+        <button id="lobby-create" style="display:none;">Create Lobby</button>
+        <button id="lobby-ready" style="display:none;">Ready</button>
+        <button id="lobby-start" style="display:none;">Start Match</button>
+        <button id="lobby-leave" style="display:none;">Leave</button>
+        <button id="lobby-disconnect" style="display:none;">Disconnect</button>
+      </div>
+      <div id="lobby-join-row">
+        <input id="lobby-join-code" type="text" placeholder="CODE" maxlength="5" />
+        <button id="lobby-join">Join</button>
+      </div>
+    </div>
+
+    <!-- Pre-lobby buttons (shown when not connected) -->
+    <button id="start-btn">ENTER ARENA</button>
   </div>
 
   <!-- Settings overlay (in-game, via pause) -->

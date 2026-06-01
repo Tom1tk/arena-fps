@@ -122,10 +122,11 @@
 - [x] All crosshair types render correctly
 - [x] Graphics toggle changes cost (DPR, far plane, lights)
 
-## M5 — Server & Lobby *(blocked until M4 DoD met)*
-- [ ] WebSocket through CF tunnel
-- [ ] Room create/join, roster, ready/start
-- [ ] Host-disband, heartbeat
+## M5 — Server & Lobby *(in progress)*
+- [x] WebSocket through CF tunnel
+- [x] Room create/join, roster, ready/start
+- [x] Host-disband, heartbeat
+- [ ] Deploy systemd service (combined HTTP+WS)
 
 ## M6 — Networked Gameplay *(blocked until M5 DoD met)*
 - [ ] Authoritative tick, prediction, interpolation, lag-comp

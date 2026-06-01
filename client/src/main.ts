@@ -6,6 +6,7 @@ import {
   DAMAGE_BODY, DAMAGE_HEAD, HITSCAN_MAX_RANGE, SPREAD_RAD, RELOAD_TIME_S,
   KILL_GOAL, POST_MATCH_DURATION_S, RESPAWN_DELAY_S, SPAWN_POSITIONS,
 } from '../../shared/constants';
+import { MAX_PLAYERS } from '../../shared/constants';
 import { playerStep, type PlayerSim } from '../../shared/simulation/step';
 import { clamp } from '../../shared/math';
 import { createArena } from './arena';
@@ -83,6 +84,139 @@ const damageIndicator = document.getElementById('damage-indicator')!;
 
 // --- Settings ---
 const settings = SettingsStore.getInstance();
+
+// --- M5: NetClient (lobby networking) ---
+import { NetClient } from './netClient';
+
+const netClient = new NetClient();
+
+// Lobby UI DOM refs
+const lobbyPanel = document.getElementById('lobby-panel')!;
+const lobbyCodeDisplay = document.getElementById('lobby-code-display')!;
+const lobbyRosterBody = document.getElementById('lobby-roster-body')!;
+const lobbyStatus = document.getElementById('lobby-status')!;
+const lobbyError = document.getElementById('lobby-error')!;
+const lobbyCreateBtn = document.getElementById('lobby-create')!;
+const lobbyReadyBtn = document.getElementById('lobby-ready')!;
+const lobbyStartBtn = document.getElementById('lobby-start')!;
+const lobbyLeaveBtn = document.getElementById('lobby-leave')!;
+const lobbyDisconnectBtn = document.getElementById('lobby-disconnect')!;
+const lobbyJoinCodeInput = document.getElementById('lobby-join-code')! as HTMLInputElement;
+const lobbyJoinBtn = document.getElementById('lobby-join')!;
+
+// Connect button = "Enter Arena"
+startBtn.addEventListener('click', () => {
+  if (!validateName()) return;
+  const name = playerNameEl.value.trim();
+  localStorage.setItem('arena-fps-name', name);
+
+  // Connect to server via CF tunnel
+  const serverUrl = window.location.origin.replace('http', 'ws');
+  netClient.connect(serverUrl);
+  titleOverlay.style.display = 'none';
+  // Show lobby panel
+  lobbyPanel.classList.add('visible');
+  lobbyStatus.textContent = 'Connecting...';
+  lobbyJoinRow.style.display = 'flex';
+  lobbyCreateBtn.style.display = 'inline-block';
+  lobbyDisconnectBtn.style.display = 'inline-block';
+});
+
+// Lobby button handlers
+const lobbyJoinRow = document.getElementById('lobby-join-row')!;
+
+lobbyCreateBtn.addEventListener('click', () => {
+  const name = localStorage.getItem('arena-fps-name') || playerNameEl.value.trim();
+  netClient.createRoom(name);
+  lobbyStatus.textContent = 'Creating lobby...';
+});
+
+lobbyJoinBtn.addEventListener('click', () => {
+  const code = lobbyJoinCodeInput.value.trim().toUpperCase();
+  const name = localStorage.getItem('arena-fps-name') || playerNameEl.value.trim();
+  if (code.length !== 5) {
+    lobbyError.textContent = 'Invalid code (5 characters)';
+    return;
+  }
+  netClient.joinRoom(code, name);
+  lobbyStatus.textContent = 'Joining...';
+});
+
+lobbyReadyBtn.addEventListener('click', () => {
+  netClient.ready();
+});
+
+lobbyStartBtn.addEventListener('click', () => {
+  netClient.start();
+});
+
+lobbyLeaveBtn.addEventListener('click', () => {
+  netClient.leave();
+});
+
+lobbyDisconnectBtn.addEventListener('click', () => {
+  netClient.disconnect();
+});
+
+// Sync lobby UI
+netClient.onChange(() => {
+  const state = netClient.getState();
+
+  // Code display
+  lobbyCodeDisplay.textContent = state.code || '';
+
+  // Roster
+  let rosterHTML = '';
+  for (const p of state.roster) {
+    const readyIcon = p.ready ? '<span class="ready-icon">✓</span>' : '<span class="not-ready-icon">○</span>';
+    const role = p.isHost ? 'Host' : '';
+    rosterHTML += `<tr><td>${p.name}</td><td>${readyIcon}</td><td>${role}</td></tr>`;
+  }
+  lobbyRosterBody.innerHTML = rosterHTML;
+
+  // Status
+  if (state.phase === 'disconnected') {
+    lobbyStatus.textContent = 'Disconnected';
+  } else if (state.phase === 'lobby') {
+    lobbyStatus.textContent = `Waiting for players (${state.roster.length}/${MAX_PLAYERS})`;
+  } else if (state.phase === 'readying') {
+    lobbyStatus.textContent = 'All ready — host can start';
+  } else if (state.phase === 'countdown') {
+    lobbyStatus.textContent = `Match starting in ${state.countdown}s...`;
+  } else if (state.phase === 'playing') {
+    lobbyStatus.textContent = 'Match in progress';
+  }
+
+  // Error
+  lobbyError.textContent = state.error || '';
+
+  // Button visibility
+  lobbyCreateBtn.style.display = state.phase === 'disconnected' ? 'inline-block' : 'none';
+  lobbyDisconnectBtn.style.display = state.phase !== 'disconnected' ? 'inline-block' : 'none';
+  lobbyJoinRow.style.display = state.phase !== 'disconnected' ? 'flex' : 'none';
+
+  if (state.code) {
+    lobbyCreateBtn.style.display = 'none';
+    lobbyLeaveBtn.style.display = 'inline-block';
+    lobbyReadyBtn.style.display = state.isHost ? 'none' : (state.phase === 'lobby' || state.phase === 'readying') ? 'inline-block' : 'none';
+    lobbyStartBtn.style.display = state.isHost && (state.phase === 'lobby' || state.phase === 'readying') ? 'inline-block' : 'none';
+  } else {
+    lobbyLeaveBtn.style.display = 'none';
+    lobbyReadyBtn.style.display = 'none';
+    lobbyStartBtn.style.display = 'none';
+  }
+
+  // When match starts, enter the game
+  if (state.phase === 'countdown' && state.countdown > 0) {
+    // Wait for countdown to end
+  }
+  if (state.phase === 'playing' && !started) {
+    // Enter the game — hide lobby, start game
+    lobbyPanel.classList.remove('visible');
+    titleOverlay.style.display = 'none';
+    initGame();
+  }
+});
 
 // --- Player name ---
 const playerNameEl = document.getElementById('player-name')! as HTMLInputElement;
@@ -632,17 +766,9 @@ function updateOverlays(dt: number): void {
   }
 }
 
-// --- Start ---
-startBtn.addEventListener('click', () => {
-  titleOverlay.style.display = 'none';
+function initGame(): void {
   started = true;
   paused = false;
-
-  // Save player name
-  const name = playerNameEl.value.trim();
-  if (name.length >= 3) {
-    localStorage.setItem('arena-fps-name', name);
-  }
 
   // Init input source
   const theCanvas = document.querySelector('canvas')!;
@@ -660,23 +786,19 @@ startBtn.addEventListener('click', () => {
   ammo = MAG_SIZE;
   kills = 0;
   playerDeaths = 0;
-  recoilPitch = 0;
   isDead = false;
   matchPhase = 'playing';
   postMatchTimer = 0;
-  killFeed = [];
   recentSpawns = [];
+  killFeed = [];
 
-  // --- M2: Create dummy targets ---
+  // Init dummy targets
   dummyTargets = createDummyTargets(5, ARENA_HALF);
   for (const t of dummyTargets) {
     scene.add(t.group);
   }
 
-  // --- M3: Smart spawn ---
-  spawnPlayer(performance.now() / 1000);
-
-  // --- M2: Collect obstacle meshes for raycast occlusion ---
+  // Collect obstacle meshes for raycast occlusion
   obstacleMeshes = [];
   arena.group.traverse((obj) => {
     if (obj instanceof THREE.Mesh && obj.name !== 'ramp') {
@@ -684,13 +806,16 @@ startBtn.addEventListener('click', () => {
     }
   });
 
-  // --- M2: Create viewmodel ---
+  // Init viewmodel
   if (viewmodel) viewmodel.dispose();
   viewmodel = new ViewModel(scene, camera);
 
-  // Click canvas to lock pointer
-  setTimeout(() => theCanvas.requestPointerLock(), 100);
-});
+  // Spawn player at smart position
+  spawnPlayer(performance.now() / 1000);
+
+  // Lock pointer
+  setTimeout(() => (document.querySelector('canvas') as HTMLCanvasElement)?.requestPointerLock(), 100);
+}
 
 // --- Render loop ---
 let lastTime = performance.now();
