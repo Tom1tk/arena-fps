@@ -360,6 +360,14 @@ function renderLoop(now: number): void {
   camera.rotation.y = player.yaw;
   camera.rotation.x = player.pitch;
 
+  // --- Render (timed) ---
+  const renderStart = performance.now();
+  renderer.render(scene, camera);
+  const renderMs = performance.now() - renderStart;
+
+  // --- Debug line (updated every frame with render timing) ---
+  debugEl.textContent = `${isWebGPU ? 'WebGPU' : 'WebGL2'} | render: ${renderMs.toFixed(1)}ms | tick: 30Hz`;
+
   // --- Update HUD (throttled: only when values actually change) ---
   const hpPct = Math.round((hp / PLAYER_MAX_HP) * 100);
   if (hpFill.dataset.lastHp !== String(hpPct)) {
@@ -374,9 +382,6 @@ function renderLoop(now: number): void {
   if (scoreboardEl.textContent !== `K: ${kills}`) {
     scoreboardEl.textContent = `K: ${kills}`;
   }
-
-  // --- Render ---
-  renderer.render(scene, camera);
 }
 
 // --- Boot ---
