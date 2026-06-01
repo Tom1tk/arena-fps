@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Arena FPS</title>
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #000; font-family: 'Segoe UI', system-ui, sans-serif; }
+    canvas { display: block; }
+
+    /* HUD overlay */
+    #hud-overlay {
+      position: fixed; inset: 0; z-index: 100;
+      pointer-events: none;
+    }
+
+    /* Crosshair */
+    #crosshair {
+      position: absolute; top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      width: 24px; height: 24px;
+    }
+    #crosshair .h {
+      position: absolute; top: 50%; left: 0; right: 0; height: 2px;
+      background: #0f0; transform: translateY(-50%);
+    }
+    #crosshair .v {
+      position: absolute; left: 50%; top: 0; bottom: 0; width: 2px;
+      background: #0f0; transform: translateX(-50%);
+    }
+
+    /* FPS Counter */
+    #fps-counter {
+      position: absolute; top: 8px; left: 8px;
+      font: bold 14px/1.4 monospace; color: #0f0;
+      text-shadow: 1px 1px 2px #000;
+    }
+    #debug-line {
+      font: 11px/1.4 monospace; color: #8f8;
+      margin-top: 2px;
+    }
+
+    /* Bottom-left: HP / Ammo */
+    #status-bar {
+      position: absolute; bottom: 20px; left: 20px;
+      font: bold 20px/1 monospace; color: #fff;
+      text-shadow: 1px 1px 3px #000;
+    }
+    #hp-bar {
+      width: 200px; height: 8px; background: rgba(0,0,0,0.5);
+      border: 1px solid #444; border-radius: 4px; margin-top: 4px;
+    }
+    #hp-fill {
+      height: 100%; width: 100%; background: #0c0;
+      border-radius: 3px; transition: width 0.15s;
+    }
+    #ammo-display {
+      font: bold 28px/1.2 monospace; color: #fff;
+      text-shadow: 1px 1px 3px #000;
+    }
+
+    /* Bottom-right: Kill feed */
+    #kill-feed {
+      position: absolute; top: 20px; right: 20px;
+      font: 13px/1.8 monospace; color: #fff;
+      text-shadow: 1px 1px 2px #000;
+      text-align: right;
+    }
+
+    /* Top-left compact scoreboard */
+    #scoreboard {
+      position: absolute; top: 40px; left: 8px;
+      font: 12px/1.6 monospace; color: #ccc;
+      text-shadow: 1px 1px 2px #000;
+    }
+
+    /* Graphics toggle */
+    #graphics-toggle {
+      position: fixed; bottom: 12px; right: 12px; z-index: 101;
+      pointer-events: auto;
+      background: rgba(0,0,0,0.6); color: #ccc; border: 1px solid #555;
+      padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 12px;
+    }
+    #graphics-toggle:hover { background: rgba(40,40,40,0.9); color: #fff; }
+
+    /* Pause overlay */
+    #pause-overlay {
+      position: fixed; inset: 0; z-index: 300;
+      display: none; flex-direction: column; align-items: center; justify-content: center;
+      background: rgba(0,0,0,0.75); color: #fff;
+    }
+    #pause-overlay h2 { font-size: 2rem; margin-bottom: 1rem; }
+    #pause-overlay button {
+      margin: 4px; padding: 8px 24px; font-size: 1rem; border: 1px solid #555;
+      border-radius: 6px; background: rgba(40,40,40,0.9); color: #fff; cursor: pointer;
+    }
+    #pause-overlay button:hover { background: #555; }
+
+    /* Tab scoreboard overlay */
+    #tab-scoreboard {
+      position: fixed; inset: 0; z-index: 250;
+      display: none; align-items: center; justify-content: center;
+      background: rgba(0,0,0,0.5); color: #fff;
+      font: 14px/2 monospace;
+    }
+    #tab-scoreboard table {
+      border-collapse: collapse; width: 60%; max-width: 500px;
+    }
+    #tab-scoreboard th, #tab-scoreboard td {
+      padding: 4px 12px; text-align: left; border-bottom: 1px solid #333;
+    }
+    #tab-scoreboard th { color: #888; font-weight: normal; }
+    #tab-scoreboard td:last-child { text-align: right; }
+
+    /* Title / Enter screen */
+    #title-overlay {
+      position: fixed; inset: 0; z-index: 400;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      background: rgba(0,0,0,0.85); color: #fff;
+    }
+    #title-overlay h1 { font-size: 3rem; margin-bottom: 0.5rem; letter-spacing: 0.1em; }
+    #title-overlay p { color: #888; margin-bottom: 0.5rem; font-size: 1rem; }
+    #title-overlay .controls { color: #666; margin-bottom: 2rem; font-size: 0.85rem; line-height: 1.8; text-align: center; }
+    #title-overlay button {
+      padding: 12px 40px; font-size: 1.2rem; border: none; border-radius: 6px;
+      background: #2a6; color: #fff; cursor: pointer;
+    }
+    #title-overlay button:hover { background: #3b7; }
+
+    /* Hit marker */
+    #hit-marker {
+      position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+      width: 30px; height: 30px; opacity: 0; transition: opacity 0.1s;
+      pointer-events: none;
+    }
+    #hit-marker.show { opacity: 1; }
+    #hit-marker .line {
+      position: absolute; background: #fff;
+    }
+    #hit-marker .l1 { top: 0; left: 5px; width: 2px; height: 8px; transform: rotate(45deg); transform-origin: top left; }
+    #hit-marker .l2 { top: 0; right: 5px; width: 2px; height: 8px; transform: rotate(-45deg); transform-origin: top right; }
+    #hit-marker .l3 { bottom: 0; left: 5px; width: 2px; height: 8px; transform: rotate(-45deg); transform-origin: bottom left; }
+    #hit-marker .l4 { bottom: 0; right: 5px; width: 2px; height: 8px; transform: rotate(45deg); transform-origin: bottom right; }
+  </style>
+</head>
+<body>
+  <!-- HUD -->
+  <div id="hud-overlay">
+    <div id="crosshair"><div class="h"></div><div class="v"></div></div>
+    <div id="fps-counter"></div>
+    <div id="debug-line"></div>
+    <div id="status-bar">
+      <div id="ammo-display">15 / ∞</div>
+      <div id="hp-bar"><div id="hp-fill"></div></div>
+    </div>
+    <div id="kill-feed"></div>
+    <div id="scoreboard"></div>
+    <div id="hit-marker">
+      <div class="line l1"></div><div class="line l2"></div>
+      <div class="line l3"></div><div class="line l4"></div>
+    </div>
+  </div>
+
+  <button id="graphics-toggle">Graphics: High</button>
+
+  <!-- Pause overlay -->
+  <div id="pause-overlay">
+    <h2>PAUSED</h2>
+    <button id="resume-btn">Resume</button>
+    <button id="leave-btn">Leave to Menu</button>
+  </div>
+
+  <!-- Tab scoreboard -->
+  <div id="tab-scoreboard">
+    <table>
+      <thead><tr><th>#</th><th>Name</th><th>Kills</th><th>Deaths</th></tr></thead>
+      <tbody id="tab-sb-body"></tbody>
+    </table>
+  </div>
+
+  <!-- Title screen -->
+  <div id="title-overlay">
+    <h1>ARENA FPS</h1>
+    <p>Browser Free-For-All</p>
+    <div class="controls">
+      WASD — Move &nbsp;|&nbsp; Mouse — Look &nbsp;|&nbsp; Click — Shoot<br>
+      Space — Jump &nbsp;|&nbsp; Ctrl — Crouch &nbsp;|&nbsp; R — Reload<br>
+      Esc — Pause &nbsp;|&nbsp; Tab — Scoreboard
+    </div>
+    <button id="start-btn">ENTER ARENA</button>
+  </div>
+
+  <script type="module" src="./src/main.ts"></script>
+</body>
+</html>

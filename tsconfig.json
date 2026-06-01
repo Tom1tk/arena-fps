@@ -1,0 +1,26 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "declaration": false,
+    "declarationMap": false,
+    "sourceMap": true,
+    "outDir": "dist",
+    "baseUrl": ".",
+    "rootDirs": ["client/src", "shared"],
+    "paths": {
+      "@shared/*": ["./shared/*"]
+    },
+    "types": ["three"]
+  },
+  "include": ["client/src/**/*.ts", "shared/**/*.ts", "node_modules/@types/three/build/*.d.ts"],
+  "exclude": ["node_modules", "dist", "server"]
+}
