@@ -1,13 +1,20 @@
 import * as THREE from 'three';
 import { WebGPURenderer } from 'three/webgpu';
 import type { GraphicsQuality } from '../../shared/types';
-import { TICK_DT, PLAYER_MAX_HP, MAG_SIZE, PLAYER_RADIUS, FIRE_RATE_RPM } from '../../shared/constants';
+import {
+  TICK_DT, PLAYER_MAX_HP, MAG_SIZE, PLAYER_RADIUS, FIRE_RATE_RPM,
+  DAMAGE_BODY, DAMAGE_HEAD, HITSCAN_MAX_RANGE, SPREAD_RAD, RELOAD_TIME_S,
+} from '../../shared/constants';
 import { playerStep, type PlayerSim } from '../../shared/simulation/step';
 import { clamp } from '../../shared/math';
 import { createArena } from './arena';
 import { FPSCounter } from './fpsCounter';
 import { SettingsStore } from './settingsStore';
 import { KeyboardMouseSource } from './inputSource';
+import { createDummyTargets, type DummyTarget, raycastHitscan } from './hitscan';
+import { ViewModel } from './viewmodel';
+import { playShoot, playReload, playKill } from './audio';
+import type { InputFrame } from '../../shared/types';
 
 // --- Arena bounds for collision ---
 const ARENA_HALF = 20;
@@ -156,6 +163,15 @@ function lerpPos(out: { x: number; y: number; z: number }, a: { x: number; y: nu
   out.y = a.y + (b.y - a.y) * t;
   out.z = a.z + (b.z - a.z) * t;
 }
+
+// --- M2: Hitscan + Dummy targets + ViewModel ---
+let dummyTargets: DummyTarget[] = [];
+let viewmodel: ViewModel | null = null;
+let obstacleMeshes: THREE.Object3D[] = [];
+// Reusable direction vector for raycast
+const _shootDir = new THREE.Vector3();
+// Cached last sim input (to avoid double-polling which resets edge detection)
+let lastSimInput: InputFrame | null = null;
 
 // --- Graphics toggle ---
 function applyQuality(quality: GraphicsQuality): void {
@@ -308,6 +324,24 @@ startBtn.addEventListener('click', () => {
   kills = 0;
   recoilPitch = 0;
 
+  // --- M2: Create dummy targets ---
+  dummyTargets = createDummyTargets(5, ARENA_HALF);
+  for (const t of dummyTargets) {
+    scene.add(t.group);
+  }
+
+  // --- M2: Collect obstacle meshes for raycast occlusion ---
+  obstacleMeshes = [];
+  arena.group.traverse((obj) => {
+    if (obj instanceof THREE.Mesh && obj.name !== 'ramp') {
+      obstacleMeshes.push(obj);
+    }
+  });
+
+  // --- M2: Create viewmodel ---
+  if (viewmodel) viewmodel.dispose();
+  viewmodel = new ViewModel(scene, camera);
+
   // Click canvas to lock pointer
   setTimeout(() => theCanvas.requestPointerLock(), 100);
 });
@@ -345,6 +379,7 @@ function renderLoop(now: number): void {
 
     if (inputSource) {
       const input = inputSource.poll();
+      lastSimInput = input;
 
       // Semi-auto fire: edge-triggered on press, fire-rate capped
       fireCooldown -= TICK_DT;
@@ -354,12 +389,59 @@ function renderLoop(now: number): void {
         fireCooldown = FIRE_COOLDOWN_S;
         // Recoil: apply to visual offset only, not player.pitch
         recoilPitch += RECOIL_KICK;
+
+        // --- M2: Hitscan ---
+        if (inputSource) {
+          // Compute shoot direction from camera yaw/pitch
+          const yaw = inputSource.getYaw();
+          const pitch = inputSource.getPitch();
+          _shootDir.set(
+            -Math.sin(yaw) * Math.cos(pitch),
+            Math.sin(pitch),
+            -Math.cos(yaw) * Math.cos(pitch)
+          );
+
+          const hit = raycastHitscan(
+            camera.position,
+            _shootDir,
+            dummyTargets,
+            obstacleMeshes,
+            HITSCAN_MAX_RANGE,
+            SPREAD_RAD,
+          );
+
+          if (hit.target) {
+            const damage = hit.isHead ? DAMAGE_HEAD : DAMAGE_BODY;
+            hit.target.takeDamage(damage);
+
+            // Show hit marker on confirmed hit
+            showHitMarker();
+
+            // Play shoot sound
+            playShoot();
+
+            // Viewmodel recoil
+            viewmodel?.fire();
+
+            // Check kill
+            if (hit.target.hp <= 0) {
+              kills++;
+              playKill();
+            }
+          } else {
+            // Miss — still play shoot sound
+            playShoot();
+            viewmodel?.fire();
+          }
+        }
       }
 
       // Reload (edge-triggered)
       if (inputSource.getReloadPressed() && !reloading && ammo < MAG_SIZE) {
         reloading = true;
-        reloadTimer = 1.6;
+        reloadTimer = RELOAD_TIME_S;
+        playReload();
+        viewmodel?.setReloading(true);
       }
 
       if (reloading) {
@@ -367,6 +449,7 @@ function renderLoop(now: number): void {
         if (reloadTimer <= 0) {
           reloading = false;
           ammo = MAG_SIZE;
+          viewmodel?.setReloading(false);
         }
       }
 
@@ -393,6 +476,17 @@ function renderLoop(now: number): void {
     const maxRecoil = Math.PI / 2 - 0.01 - basePitch;
     const clampedRecoil = recoilPitch > 0 ? Math.min(recoilPitch, maxRecoil) : recoilPitch;
     camera.rotation.x = basePitch + clampedRecoil;
+  }
+
+  // --- M2: Update viewmodel ---
+  // Use cached movement state from the sim input (avoid double-polling which resets edge detection)
+  const cachedInput = lastSimInput;
+  const isMoving = cachedInput ? (cachedInput.moveX !== 0 || cachedInput.moveZ !== 0) : false;
+  viewmodel?.update(frameDt, isMoving);
+
+  // --- M2: Update dummy targets (respawn timers) ---
+  for (const t of dummyTargets) {
+    t.update(frameDt);
   }
 
   // --- Render (timed) ---
