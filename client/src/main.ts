@@ -595,6 +595,7 @@ function onPlayerDeath(killer: string, hs: boolean): void {
 function respawnPlayer(now: number): void {
   spawnPlayer(now);
   deathOverlay.style.display = 'none';
+  postMatchOverlay.style.display = 'none';
 }
 
 // --- M3: Damage indicator ---
@@ -607,7 +608,10 @@ function showDamageIndicator(): void {
 function updateOverlays(dt: number): void {
   // Death overlay countdown
   if (isDead) {
+    deathOverlay.style.display = 'flex';
     deathCountdown.textContent = `Respawning in ${Math.ceil(playerRespawnTimer)}s...`;
+  } else {
+    deathOverlay.style.display = 'none';
   }
 
   // Post-match overlay
@@ -835,26 +839,44 @@ function renderLoop(now: number): void {
   viewmodel?.update(frameDt, isMoving);
 
   // --- M2: Update dummy targets (respawn timers + bot damage) ---
-  // Bot damage to player (M3)
+  // Bot damage to player (M3) — only when alive and playing
   if (matchPhase === 'playing' && !isDead) {
+    let totalBotDamage = 0;
     for (const t of dummyTargets) {
       const dmg = t.update(frameDt, player.pos);
       if (dmg > 0) {
-        hp -= dmg;
-        showDamageIndicator();
-        if (hp <= 0) {
-          hp = 0;
-          onPlayerDeath(t.name, false);
-        }
+        totalBotDamage += dmg;
       }
     }
-
-    // Player respawn countdown
-    if (isDead) {
-      playerRespawnTimer -= frameDt;
-      if (playerRespawnTimer <= 0) {
-        respawnPlayer(performance.now() / 1000);
+    // Apply total bot damage, cap at one death per frame
+    if (totalBotDamage > 0) {
+      hp -= totalBotDamage;
+      showDamageIndicator();
+      if (hp <= 0) {
+        hp = 0;
+        // Find nearest alive bot as the "killer"
+        let killer: string = 'Bot';
+        let nearestDist = Infinity;
+        for (const t of dummyTargets) {
+          if (!t.alive) continue;
+          const dx = player.pos.x - t.group.position.x;
+          const dz = player.pos.z - t.group.position.z;
+          const dist = dx * dx + dz * dz;
+          if (dist < nearestDist) {
+            nearestDist = dist;
+            killer = t.name;
+          }
+        }
+        onPlayerDeath(killer, false);
       }
+    }
+  }
+
+  // --- Player respawn countdown (runs even when dead, OUTSIDE the !isDead block) ---
+  if (isDead && matchPhase === 'playing') {
+    playerRespawnTimer -= frameDt;
+    if (playerRespawnTimer <= 0) {
+      respawnPlayer(performance.now() / 1000);
     }
   }
 
