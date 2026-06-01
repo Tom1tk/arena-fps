@@ -42,6 +42,7 @@ export class NetClient {
   private listeners: Set<() => void> = new Set();
   private hbTimer: ReturnType<typeof setInterval> | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private countdownTimer: ReturnType<typeof setInterval> | null = null;
 
   get phase(): string { return this.state.phase; }
   get code(): string | null { return this.state.code; }
@@ -200,10 +201,12 @@ export class NetClient {
         break;
 
       case 'match_start':
-        this.state.phase = msg.phase || 'countdown';
+        this.state.phase = 'countdown';
         this.state.countdown = msg.countdown || 3;
         this.state.error = null;
         this.notify();
+        // Start local countdown timer
+        this.startCountdown(this.state.countdown ?? 3);
         break;
 
       case 'ready_state':
@@ -242,8 +245,25 @@ export class NetClient {
     }, HEARTBEAT_INTERVAL_S * 1000);
   }
 
+  private startCountdown(seconds: number): void {
+    // Clear any existing countdown
+    if (this.countdownTimer) { clearInterval(this.countdownTimer); this.countdownTimer = null; }
+    this.countdownTimer = setInterval(() => {
+      this.state.countdown -= 1;
+      if (this.state.countdown <= 0) {
+        if (this.countdownTimer) { clearInterval(this.countdownTimer); this.countdownTimer = null; }
+        this.state.countdown = 0;
+        this.state.phase = 'playing';
+        this.notify();
+      } else {
+        this.notify();
+      }
+    }, 1000);
+  }
+
   private clearTimers(): void {
     if (this.hbTimer) { clearInterval(this.hbTimer); this.hbTimer = null; }
     if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
+    if (this.countdownTimer) { clearInterval(this.countdownTimer); this.countdownTimer = null; }
   }
 }
