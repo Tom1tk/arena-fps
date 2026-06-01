@@ -141,6 +141,22 @@ const FIRE_COOLDOWN_S = 60 / FIRE_RATE_RPM; // ~0.167s per shot at 360 RPM
 // Fixed timestep accumulator
 let simAccum = 0;
 
+// --- Render interpolation state (no per-frame allocation) ---
+const prevPos = { x: 0, y: 1.6, z: 10 };  // snapshot before each tick
+const renderPos = { x: 0, y: 1.6, z: 10 }; // lerped position for camera
+
+// Recoil: separate visual offset applied only to camera, decays each frame.
+// Keeps playerStep as single authority over base aim (important at M6+).
+let recoilPitch = 0;
+const RECOIL_KICK = 0.02;
+const RECOIL_DECAY_RATE = 8; // per second — how fast recoil snaps back
+
+function lerpPos(out: { x: number; y: number; z: number }, a: { x: number; y: number; z: number }, b: { x: number; y: number; z: number }, t: number): void {
+  out.x = a.x + (b.x - a.x) * t;
+  out.y = a.y + (b.y - a.y) * t;
+  out.z = a.z + (b.z - a.z) * t;
+}
+
 // --- Graphics toggle ---
 function applyQuality(quality: GraphicsQuality): void {
   settings.set({ graphicsQuality: quality });
@@ -290,6 +306,7 @@ startBtn.addEventListener('click', () => {
   hp = PLAYER_MAX_HP;
   ammo = MAG_SIZE;
   kills = 0;
+  recoilPitch = 0;
 
   // Click canvas to lock pointer
   setTimeout(() => theCanvas.requestPointerLock(), 100);
@@ -321,19 +338,23 @@ function renderLoop(now: number): void {
   // --- Fixed timestep simulation ---
   simAccum += frameDt;
   while (simAccum >= TICK_DT) {
+    // Snapshot position before stepping (for render interpolation)
+    prevPos.x = player.pos.x;
+    prevPos.y = player.pos.y;
+    prevPos.z = player.pos.z;
+
     if (inputSource) {
       const input = inputSource.poll();
 
-    // Semi-auto fire: edge-triggered on press, fire-rate capped
-    fireCooldown -= TICK_DT;
-    if (fireCooldown < 0) fireCooldown = 0;
-    if (inputSource.getFirePressed() && !reloading && ammo > 0 && fireCooldown <= 0) {
-      ammo--;
-      fireCooldown = FIRE_COOLDOWN_S;
-      // Recoil kick
-      player.pitch += 0.02;
-      // Hitmarker is NOT shown here — only on confirmed hit (M2+ dummy raycast, M6+ server confirmation)
-    }
+      // Semi-auto fire: edge-triggered on press, fire-rate capped
+      fireCooldown -= TICK_DT;
+      if (fireCooldown < 0) fireCooldown = 0;
+      if (inputSource.getFirePressed() && !reloading && ammo > 0 && fireCooldown <= 0) {
+        ammo--;
+        fireCooldown = FIRE_COOLDOWN_S;
+        // Recoil: apply to visual offset only, not player.pitch
+        recoilPitch += RECOIL_KICK;
+      }
 
       // Reload (edge-triggered)
       if (inputSource.getReloadPressed() && !reloading && ammo < MAG_SIZE) {
@@ -354,11 +375,25 @@ function renderLoop(now: number): void {
     simAccum -= TICK_DT;
   }
 
-  // --- Update camera from player sim ---
-  camera.position.set(player.pos.x, player.pos.y, player.pos.z);
+  // --- Decay recoil toward zero each frame (visual only) ---
+  recoilPitch *= Math.max(0, 1 - RECOIL_DECAY_RATE * frameDt);
+
+  // --- Interpolate render position ---
+  const alpha = simAccum / TICK_DT; // 0..1 fraction within current tick
+  lerpPos(renderPos, prevPos, player.pos, alpha);
+
+  // --- Update camera from interpolated position + per-frame aim ---
+  camera.position.set(renderPos.x, renderPos.y, renderPos.z);
   camera.rotation.order = 'YXZ';
-  camera.rotation.y = player.yaw;
-  camera.rotation.x = player.pitch;
+  // Source yaw/pitch directly from input source (per-frame, no tick-coupling)
+  if (inputSource) {
+    camera.rotation.y = inputSource.getYaw();
+    // Clamp recoil so total pitch stays within ±89°
+    const basePitch = inputSource.getPitch();
+    const maxRecoil = Math.PI / 2 - 0.01 - basePitch;
+    const clampedRecoil = recoilPitch > 0 ? Math.min(recoilPitch, maxRecoil) : recoilPitch;
+    camera.rotation.x = basePitch + clampedRecoil;
+  }
 
   // --- Render (timed) ---
   const renderStart = performance.now();

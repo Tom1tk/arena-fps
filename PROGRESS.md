@@ -50,12 +50,17 @@
 ---
 
 ## M1 — FPS Controller (Local) *(blocked until M0 DoD met)*
-- [ ] Pointer lock, WASD/jump/crouch
-- [ ] Fixed-timestep movement in `/shared`
-- [ ] Swept capsule-vs-box/ramp collision
-- [ ] FOV/sensitivity from settings
-- [ ] Input source abstraction
-- [ ] OOB kill-plane
+- [x] Pointer lock, WASD/jump/crouch
+- [x] Fixed-timestep movement in `/shared`
+- [x] Swept capsule-vs-box collision (capsule-vs-AABB with iterative resolution)
+- [x] FOV/sensitivity from settings
+- [x] Input source abstraction
+- [x] OOB kill-plane
+- [x] **Render interpolation** — camera positioned from `lerp(prevPos, player.pos, alpha)` using residual `simAccum / TICK_DT` fraction. Eliminates 30 Hz stepping artifact at 165 Hz display.
+- [x] **Recoil persistence fix** — `recoilPitch` is a separate visual offset (not `player.pitch`), decays per-frame via `RECOIL_DECAY_RATE`. Keeps `playerStep` as single authority over base aim for M6+ networking.
+- [x] **Per-frame aim** — camera yaw/pitch sourced directly from `inputSource.getYaw()/getPitch()` each frame, not tick-coupled.
+
+> Remote-entity/snapshot interpolation remains deferred to M6.
 
 ## M2 — Weapon & Hitscan *(blocked until M1 DoD met)*
 - [ ] Pistol, mag, fire-rate, reload, hitscan
