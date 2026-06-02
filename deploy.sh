@@ -26,8 +26,9 @@ echo "[2/4] Installing dependencies..."
 cd "$DEPLOY_DIR"
 npm install --include=dev --silent
 
-# 3. Build client + server
+# 3. Build client + server (force clean rebuild to avoid Vite cache)
 echo "[3/4] Building..."
+rm -rf "$DEPLOY_DIR/dist" "$DEPLOY_DIR/node_modules/.vite"
 npm run build 2>&1 | tail -3
 npx tsc -p server/tsconfig.json 2>&1 | tail -3 || true
 
