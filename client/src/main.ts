@@ -997,6 +997,7 @@ function renderLoop(now: number): void {
       isDead = !me.alive;
       kills = me.kills;
       playerDeaths = me.deaths ?? playerDeaths;
+      reloading = me.reloading;
 
       // Handle death overlay
       if (!me.alive) {
@@ -1036,7 +1037,14 @@ function renderLoop(now: number): void {
 
     // --- Networked viewmodel & animations ---
     if (viewmodel && inputSource) {
-      viewmodel.update(frameDt, inputSource.getFirePressed());
+      // Fire viewmodel on edge-triggered shoot
+      if (inputSource.getFirePressed() && ammo > 0 && !reloading) {
+        viewmodel.fire();
+        playShoot();
+      }
+      viewmodel.update(frameDt, input.moveX !== 0 || input.moveZ !== 0);
+      // Handle reload state
+      viewmodel.setReloading(reloading);
     }
 
     // --- Networked scoreboard ---
@@ -1176,19 +1184,26 @@ function renderLoop(now: number): void {
     player.pitch = pitch;
   }
 
-  camera.position.set(renderPos.x, renderPos.y + PLAYER_RADIUS * 0.5, renderPos.z);
+  camera.position.set(renderPos.x, renderPos.y, renderPos.z);
   camera.rotation.order = 'YXZ';
-  camera.rotation.y = player.yaw;
-  camera.rotation.x = player.pitch - recoilPitch;
-
-  // Decay recoil
-  if (recoilPitch > 0) {
-    recoilPitch = Math.max(0, recoilPitch - RECOIL_DECAY_RATE * frameDt);
+  // Source yaw/pitch directly from input source (per-frame, no tick-coupling)
+  if (inputSource) {
+    camera.rotation.y = inputSource.getYaw();
+    // Clamp recoil so total pitch stays within ±89°
+    const basePitch = inputSource.getPitch();
+    const maxRecoil = Math.PI / 2 - 0.01 - basePitch;
+    const clampedRecoil = recoilPitch > 0 ? Math.min(recoilPitch, maxRecoil) : recoilPitch;
+    camera.rotation.x = basePitch + clampedRecoil;
   }
 
+  // Decay recoil toward zero each frame (visual only)
+  recoilPitch *= Math.max(0, 1 - RECOIL_DECAY_RATE * frameDt);
+
   // --- Viewmodel ---
-  if (viewmodel && inputSource) {
-    viewmodel.update(frameDt, inputSource.getFirePressed());
+  const cachedInput = lastSimInput;
+  const isMoving = cachedInput ? (cachedInput.moveX !== 0 || cachedInput.moveZ !== 0) : false;
+  if (viewmodel) {
+    viewmodel.update(frameDt, isMoving);
   }
 
   // --- Update overlays ---
