@@ -141,11 +141,12 @@ export class GameWorld {
     }
   }
 
-  addPlayer(ws: WebSocket, name: string): number {
-    const id = nextPlayerId++;
+  addPlayer(ws: WebSocket, name: string, id?: number): number {
+    const playerId = id ?? nextPlayerId++;
     const spawn = this.pickSpawn();
+    console.log(`[GameWorld] addPlayer id=${playerId} name=${name}`);
     const p: ServerPlayer = {
-      ws, id, name,
+      ws, id: playerId, name,
       sim: {
         pos: { x: spawn.pos.x, y: spawn.pos.y, z: spawn.pos.z },
         vel: { x: 0, y: 0, z: 0 },
@@ -162,10 +163,10 @@ export class GameWorld {
       ackInputSeq: 0,
       connected: true,
     };
-    this.players.set(id, p);
+    this.players.set(playerId, p);
     this.recentSpawns.push({ pos: { ...p.sim.pos }, time: Date.now() / 1000 });
-    this.events.push({ type: 'Spawn', id, pos: { ...p.sim.pos } });
-    return id;
+    this.events.push({ type: 'Spawn', id: playerId, pos: { ...p.sim.pos } });
+    return playerId;
   }
 
   removePlayer(id: number): void {

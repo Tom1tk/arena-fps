@@ -147,6 +147,10 @@ export class NetGame {
     // BUG FIX: match on numeric id, not name (names not unique)
     const myId = this.net.myPlayerId;
     const myState = snapshot.players.find(p => p.id === myId);
+    // DEBUG: verify identity on first snapshot
+    if (myState && this.myId === null) {
+      console.log(`[NetGame] First snapshot: myPlayerId=${myId} matched id=${myState.id}`);
+    }
     if (myState) {
       // Set myId on first snapshot
       if (this.myId === null) {

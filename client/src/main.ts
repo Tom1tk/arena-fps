@@ -410,6 +410,13 @@ const camera = new THREE.PerspectiveCamera(
   500
 );
 
+// --- Menu camera ---
+let menuCamAngle = 0;
+const MENU_CAM_RADIUS = 30;
+const MENU_CAM_HEIGHT = 25;
+const MENU_CAM_ROTATE_SPEED = 0.3; // radians per second
+const MENU_CAM_LOOK_HEIGHT = 0;
+
 // --- Arena ---
 const arena = createArena(settings.get().graphicsQuality);
 scene.add(arena.group);
@@ -646,13 +653,10 @@ settingsCloseBtn.addEventListener('click', () => {
 });
 
 leaveBtn.addEventListener('click', () => {
-  started = false;
-  paused = false;
-  pauseOverlay.style.display = 'none';
-  settingsOverlay.style.display = 'none';
+  endMatch();
+  netClient.disconnect();
+  hideAllSubMenus();
   titleOverlay.style.display = 'flex';
-  syncMenuControls();
-  if (document.pointerLockElement) document.exitPointerLock();
 });
 
 function getPlayerName(): string {
@@ -853,7 +857,50 @@ function updateOverlays(dt: number): void {
   }
 }
 
+function endMatch(): void {
+  started = false;
+  networkedMode = false;
+  paused = false;
+
+  if (viewmodel) { viewmodel.dispose(); viewmodel = null; }
+  if (remotePlayers) { remotePlayers.dispose(); remotePlayers = null; }
+  if (netGame) { netGame = null; }
+
+  for (const t of dummyTargets) {
+    scene.remove(t.group);
+    t.group.traverse(child => {
+      if (child instanceof THREE.Mesh) {
+        child.geometry.dispose();
+        if (Array.isArray(child.material)) child.material.forEach(m => m.dispose());
+        else child.material.dispose();
+      }
+    });
+  }
+  dummyTargets = [];
+
+  kills = 0;
+  playerDeaths = 0;
+  isDead = false;
+  matchPhase = 'playing';
+  killFeed = [];
+  inputSeq = 0;
+  simAccum = 0;
+  netAccum = 0;
+  hp = PLAYER_MAX_HP;
+  ammo = MAG_SIZE;
+  reloading = false;
+  reloadTimer = 0;
+  fireCooldown = 0;
+  recoilPitch = 0;
+  lastProcessedTick = 0;
+  recentSpawns = [];
+
+  if (inputSource) { inputSource.dispose(); inputSource = null; }
+  if (document.pointerLockElement) document.exitPointerLock();
+}
+
 function initGame(networked: boolean = false): void {
+  endMatch();
   started = true;
   paused = false;
   networkedMode = networked;
@@ -951,8 +998,21 @@ function renderLoop(now: number): void {
     if (hitMarkerTimer <= 0) hitMarker.classList.remove('show');
   }
 
-  // --- Paused: still render but don't simulate ---
-  if (!started || paused || tabOpen) {
+  // --- Menu: rotating aerial view ---
+  if (!started) {
+    menuCamAngle += MENU_CAM_ROTATE_SPEED * frameDt;
+    camera.position.set(
+      Math.cos(menuCamAngle) * MENU_CAM_RADIUS,
+      MENU_CAM_HEIGHT,
+      Math.sin(menuCamAngle) * MENU_CAM_RADIUS
+    );
+    camera.lookAt(0, MENU_CAM_LOOK_HEIGHT, 0);
+    renderer.render(scene, camera);
+    return;
+  }
+
+  // --- Paused / tab-focus: still render but don't simulate ---
+  if (paused || tabOpen) {
     renderer.render(scene, camera);
     return;
   }

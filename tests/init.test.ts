@@ -380,3 +380,76 @@ describe('Bug Fix: Identity by id, not name', () => {
   });
 });
 
+// --- ROUND 2 TESTS: from M6_FIX_ROUND2_PROMPT.md ---
+
+describe('Identity Unification: serverId === GameWorld id', () => {
+  it('addPlayer with explicit id uses that id instead of allocating new one', async () => {
+    vi.resetModules();
+    const mod = await import('../server/src/gameWorld');
+    const GameWorld = mod.GameWorld;
+
+    const gw = new GameWorld(0);
+    const serverId = 42;
+    const id = gw.addPlayer({ readyState: 1 } as any, 'TestPlayer', serverId);
+
+    // The returned id MUST equal the serverId passed in
+    expect(id).toBe(serverId);
+
+    // The player in the map must have that id
+    const player = gw.players.get(serverId);
+    expect(player).toBeDefined();
+    expect(player!.id).toBe(serverId);
+
+    // Snapshot must list the player with serverId
+    const snapshot = gw.tick();
+    const snapshotPlayer = snapshot.players.find(p => p.id === serverId);
+    expect(snapshotPlayer).toBeDefined();
+    expect(snapshotPlayer!.name).toBe('TestPlayer');
+  });
+
+  it('multiple players with explicit serverIds retain their ids in snapshot', async () => {
+    vi.resetModules();
+    const mod = await import('../server/src/gameWorld');
+    const GameWorld = mod.GameWorld;
+
+    const gw = new GameWorld(0);
+    gw.addPlayer({ readyState: 1 } as any, 'P1', 10);
+    gw.addPlayer({ readyState: 1 } as any, 'P2', 11);
+
+    const snapshot = gw.tick();
+    expect(snapshot.players.length).toBe(2);
+    expect(snapshot.players.find(p => p.id === 10)).toBeDefined();
+    expect(snapshot.players.find(p => p.id === 11)).toBeDefined();
+  });
+});
+
+describe('Bot/Player ID non-collision', () => {
+  it('with players and bots, all IDs in snapshot are unique', async () => {
+    vi.resetModules();
+    const mod = await import('../server/src/gameWorld');
+    const GameWorld = mod.GameWorld;
+
+    const gw = new GameWorld(3); // 3 bots
+    gw.addPlayer({ readyState: 1 } as any, 'P1', 1);
+    gw.addPlayer({ readyState: 1 } as any, 'P2', 2);
+
+    const snapshot = gw.tick();
+    const ids = snapshot.players.map(p => p.id);
+    const uniqueIds = new Set(ids);
+
+    // All IDs unique
+    expect(uniqueIds.size).toBe(ids.length);
+
+    // Player IDs are 1, 2
+    expect(ids).toContain(1);
+    expect(ids).toContain(2);
+
+    // Bot IDs are all >= 100
+    for (const id of ids) {
+      if (id !== 1 && id !== 2) {
+        expect(id).toBeGreaterThanOrEqual(100);
+      }
+    }
+  });
+});
+
