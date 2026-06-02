@@ -72,6 +72,7 @@ export const LAGCOMP_HISTORY_MS = 1000;
 export const LAGCOMP_HISTORY_TICKS = Math.round((LAGCOMP_HISTORY_MS / 1000) * SERVER_TICK_HZ);
 export const INPUT_REDUNDANCY = 3;
 export const INPUT_BUFFER_MAX = 128;
+export const MAX_INPUTS_PER_TICK = 5;
 export const SMOOTH_TAU_MS = 100;
 export const HEARTBEAT_INTERVAL_S = 25;
 export const HEARTBEAT_MISS_LIMIT = 3;

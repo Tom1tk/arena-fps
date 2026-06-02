@@ -454,6 +454,10 @@ const netCamTarget = { x: 0, y: 1.6, z: 10 };
 let netCamLerpSpeed = 12; // per second lerp speed for position smoothing
 // Track last processed event tick to avoid re-processing
 let lastProcessedTick = 0;
+// Tick-locked accumulator for networked input+prediction (mirrors practice simAccum)
+let netAccum = 0;
+// Previous predicted position for camera interpolation between ticks
+const prevPredictedPos = { x: 0, y: 1.6, z: 10 };
 
 // --- M3: Match state ---
 type MatchPhase = 'playing' | 'post_match';
@@ -953,35 +957,47 @@ function renderLoop(now: number): void {
     return;
   }
 
-  // --- NETWORKED MODE: client prediction + server reconciliation ---
+  // --- NETWORKED MODE: tick-locked client prediction + server reconciliation ---
   if (networkedMode && netGame && inputSource) {
-    // 1. Poll input from keyboard/mouse source
-    const input = inputSource.poll();
-    const yaw = inputSource.getYaw();
-    const pitch = inputSource.getPitch();
+    // --- Tick-locked accumulator (mirrors practice simAccum pattern) ---
+    // Cap frameDt to avoid spiral-of-death; accumulate and process one tick per input.
+    netAccum += Math.min(frameDt, 0.1);
+    while (netAccum >= TICK_DT) {
+      // 1. Poll input from keyboard/mouse source (once per tick, not per frame)
+      const tickInput = inputSource.poll();
 
-    // 2. Build InputFrame with proper viewTick for server lag compensation
-    inputSeq++;
-    const inputFrame: InputFrame = {
-      seq: inputSeq,
-      viewTick: netGame.viewTick,
-      moveX: input.moveX,
-      moveZ: input.moveZ,
-      yaw,
-      pitch,
-      buttons: input.buttons,
-    };
+      // 2. Build InputFrame with proper viewTick for server lag compensation
+      inputSeq++;
+      const inputFrame: InputFrame = {
+        seq: inputSeq,
+        viewTick: netGame.viewTick,
+        moveX: tickInput.moveX,
+        moveZ: tickInput.moveZ,
+        yaw: inputSource.getYaw(),
+        pitch: inputSource.getPitch(),
+        buttons: tickInput.buttons,
+      };
 
-    // 3. Queue input for redundancy tracking
-    netGame.queueInput(inputFrame);
+      // 3. Queue input for redundancy tracking
+      netGame.queueInput(inputFrame);
 
-    // 4. Step local prediction for zero-latency movement (§4.4)
-    netGame.stepPrediction(inputFrame, TICK_DT);
+      // 4. Snapshot predicted position before stepping (for render interpolation)
+      prevPredictedPos.x = netGame.predictedSim.pos.x;
+      prevPredictedPos.y = netGame.predictedSim.pos.y;
+      prevPredictedPos.z = netGame.predictedSim.pos.z;
 
-    // 5. Send to server (NetClient handles INPUT_REDUNDANCY)
-    netGame.net.sendInput(inputFrame);
+      // 5. Step local prediction for zero-latency movement (§4.4)
+      netGame.stepPrediction(inputFrame, TICK_DT);
 
-    // 6. Process new server snapshot if available
+      // 6. Send to server (NetClient handles INPUT_REDUNDANCY)
+      netGame.net.sendInput(inputFrame);
+
+      netAccum -= TICK_DT;
+    }
+
+    // --- Post-tick: process server snapshots & render interpolation ---
+
+    // 7. Process new server snapshot if available (once per frame, not per tick)
     const latestSnapshot = netGame.net.latestSnapshot;
     if (latestSnapshot && latestSnapshot.serverTick > netGame.lastServerTick) {
       // Reconcile prediction + update entities (§4.4 / §4.6)
@@ -991,17 +1007,24 @@ function renderLoop(now: number): void {
       netGame.net.ackInputs(latestSnapshot.ackInputSeq);
     }
 
-    // 7. Update error smoothing decay (§4.4 visual correction)
+    // 8. Update error smoothing decay (§4.4 visual correction)
     netGame.updateSmooth(frameDt);
 
-    // 8. Camera position from predicted state (with error smoothing)
-    const myPos = netGame.getMyPredictedPos();
-    camera.position.set(myPos.x, myPos.y, myPos.z);
+    // 9. Camera position: interpolate between ticks for smooth rendering
+    // prevPredictedPos = position before last tick; predictedSim = position after last tick.
+    // alpha = fraction of the way into the next tick (0 = just finished a tick, 1 = about to tick).
+    const alpha = clamp(netAccum / TICK_DT, 0, 1);
+    const currPos = netGame.getMyPredictedPos();
+    const camX = prevPredictedPos.x + (currPos.x - prevPredictedPos.x) * alpha;
+    const camY = prevPredictedPos.y + (currPos.y - prevPredictedPos.y) * alpha;
+    const camZ = prevPredictedPos.z + (currPos.z - prevPredictedPos.z) * alpha;
+    camera.position.set(camX, camY, camZ);
     camera.rotation.order = 'YXZ';
-    camera.rotation.y = yaw;
-    camera.rotation.x = pitch;
+    // Look (yaw/pitch) stays per-frame from inputSource, NOT tick-gated
+    camera.rotation.y = inputSource.getYaw();
+    camera.rotation.x = inputSource.getPitch();
 
-    // 9. Update HUD from predicted state
+    // 10. Update HUD from predicted state
     hp = netGame.predictedHp;
     ammo = netGame.predictedAmmo;
     isDead = !netGame.predictedAlive;
@@ -1021,10 +1044,9 @@ function renderLoop(now: number): void {
       deathOverlay.style.display = 'none';
     }
 
-    // 10. Update remote players with interpolation (§4.6)
+    // 11. Update remote players with interpolation (§4.6)
     if (remotePlayers && netGame) {
       const remotes = netGame.getRemotes();
-      // Feed interpolated entities into remote player manager
       const remoteEntities: typeof remotes = remotes.map(e => {
         const interpPos = netGame!.getInterpolatedPos(e);
         return {
@@ -1035,7 +1057,7 @@ function renderLoop(now: number): void {
       remotePlayers.update(remoteEntities, camera);
     }
 
-    // 11. Process server events — only once per new tick to avoid re-firing
+    // 12. Process server events — only once per new tick to avoid re-firing
     if (netGame.lastServerTick !== lastProcessedTick) {
       lastProcessedTick = netGame.lastServerTick;
       const myId = netGame.myId;
@@ -1069,7 +1091,8 @@ function renderLoop(now: number): void {
         viewmodel.fire();
         playShoot();
       }
-      viewmodel.update(frameDt, input.moveX !== 0 || input.moveZ !== 0);
+      const vmInput = inputSource.poll();
+      viewmodel.update(frameDt, vmInput.moveX !== 0 || vmInput.moveZ !== 0);
       viewmodel.setReloading(reloading);
     }
 

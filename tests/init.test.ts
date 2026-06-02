@@ -260,3 +260,123 @@ describe('Simulation', () => {
     expect(dist).toBeGreaterThanOrEqual(PLAYER_RADIUS * 1.8);
   });
 });
+
+// --- REQUIRED NEW TESTS (from m5-m6-netcode-fix-plan.md) ---
+
+describe('Bug Fix: Ack reflects processed, not received', () => {
+  let GameWorld: any;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    const mod = await import('../server/src/gameWorld');
+    GameWorld = mod.GameWorld;
+  });
+
+  it('feeding 5 inputs without ticking: ackInputSeq stays at 0', () => {
+    const gw = new GameWorld(0);
+    const id = gw.addPlayer({ readyState: 1 } as any, 'P1');
+
+    // Feed 5 inputs via processInput without ticking
+    for (let seq = 1; seq <= 5; seq++) {
+      gw.processInput(id, {
+        seq, viewTick: 0, moveX: 1, moveZ: 0,
+        yaw: 0, pitch: 0, buttons: 0,
+      });
+    }
+
+    const p = gw.players.get(id);
+    // ackInputSeq should STILL be 0 (not advanced on receipt)
+    expect(p.ackInputSeq).toBe(0);
+    // But buffer should have 5 inputs
+    expect(p.inputBuffer.size).toBe(5);
+  });
+
+  it('after tick, ackInputSeq advanced by at most MAX_INPUTS_PER_TICK', async () => {
+    const { MAX_INPUTS_PER_TICK } = await import('../shared/constants');
+    const gw = new GameWorld(0);
+    const id = gw.addPlayer({ readyState: 1 } as any, 'P1');
+
+    // Feed 5 inputs
+    for (let seq = 1; seq <= 5; seq++) {
+      gw.processInput(id, {
+        seq, viewTick: 0, moveX: 1, moveZ: 0,
+        yaw: 0, pitch: 0, buttons: 0,
+      });
+    }
+
+    // Tick once
+    gw.tick();
+
+    const p = gw.players.get(id);
+    // ackInputSeq should equal lastInputSeq (highest processed)
+    expect(p.ackInputSeq).toBe(p.lastInputSeq);
+    // Should have processed at most MAX_INPUTS_PER_TICK
+    expect(p.ackInputSeq).toBeLessThanOrEqual(MAX_INPUTS_PER_TICK);
+  });
+});
+
+describe('Bug Fix: Ordered drain, no loss within cap', () => {
+  let GameWorld: any;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    const mod = await import('../server/src/gameWorld');
+    GameWorld = mod.GameWorld;
+  });
+
+  it('buffer seq 1..5, tick once: all five applied in order', async () => {
+    const gw = new GameWorld(0);
+    const id = gw.addPlayer({ readyState: 1 } as any, 'P1');
+
+    for (let seq = 1; seq <= 5; seq++) {
+      gw.processInput(id, {
+        seq, viewTick: 0, moveX: 1, moveZ: 0,
+        yaw: 0, pitch: 0, buttons: 0,
+      });
+    }
+
+    gw.tick();
+
+    const p = gw.players.get(id);
+    // All 5 should be processed (lastInputSeq = 5)
+    expect(p.lastInputSeq).toBe(5);
+    // Buffer should be empty
+    expect(p.inputBuffer.size).toBe(0);
+  });
+});
+
+describe('Bug Fix: Identity by id, not name', () => {
+  it('NetGame.update resolves myId by numeric id even with same name', async () => {
+    const { NetGame } = await import('../client/src/netGame.js');
+    const { NetClient } = await import('../client/src/netClient.js');
+
+    // Mock NetClient with myPlayerId = 2 (not matching name)
+    const mockNet = {
+      myPlayerId: 2,
+      name: 'SameName',
+      latestSnapshot: null,
+    } as any;
+
+    const ng = new NetGame(mockNet);
+
+    // Snapshot has two players with same name but different ids
+    const snapshot = {
+      serverTick: 1,
+      ackInputSeq: 0,
+      players: [
+        { id: 1, name: 'SameName', pos: { x: -15, y: 1.6, z: -15 }, vel: { x: 0, y: 0, z: 0 }, yaw: 0, pitch: 0, hp: 100, ammo: 15, alive: true, crouch: false, flags: 0, kills: 0, deaths: 0 },
+        { id: 2, name: 'SameName', pos: { x: 15, y: 1.6, z: 15 }, vel: { x: 0, y: 0, z: 0 }, yaw: 0, pitch: 0, hp: 100, ammo: 15, alive: true, crouch: false, flags: 0, kills: 0, deaths: 0 },
+      ],
+      events: [],
+    };
+
+    ng.update(snapshot);
+
+    // myId should resolve to 2 (our numeric id), not 1 (wrong player with same name)
+    expect(ng.myId).toBe(2);
+    // Predicted position should match player id=2 (at 15, 15)
+    expect(ng.predictedSim.pos.x).toBeCloseTo(15);
+    expect(ng.predictedSim.pos.z).toBeCloseTo(15);
+  });
+});
+

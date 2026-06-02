@@ -1,5 +1,5 @@
 import { WebSocket } from 'ws';
-import { GameWorld } from './gameWorld.js';
+import { GameWorld, allocatePlayerId } from './gameWorld.js';
 
 // --- Re-exported from constants ---
 export { MAX_PLAYERS, KILL_GOAL, POST_MATCH_DURATION_S, START_COUNTDOWN_S, LOBBY_CODE_LENGTH, NAME_MIN, NAME_MAX, HEARTBEAT_INTERVAL_S, HEARTBEAT_MISS_LIMIT } from '../../shared/constants.js';
@@ -11,6 +11,7 @@ export interface PlayerInfo {
   name: string;
   ready: boolean;
   isHost: boolean;
+  serverId: number;  // numeric player id, allocated at join
 }
 
 export interface Room {
@@ -68,7 +69,7 @@ export class LobbyManager {
       startedAt: 0,
       gameWorld: null,
     };
-    room.players.set(ws, { name, ready: false, isHost: true });
+    room.players.set(ws, { name, ready: false, isHost: true, serverId: allocatePlayerId() });
     this.rooms.set(code, room);
     return code;
   }
@@ -85,7 +86,7 @@ export class LobbyManager {
     if (room.players.size >= MAX_PLAYERS) return { error: 'Lobby full' };
     if (room.players.has(ws)) return { error: 'Already in room' };
 
-    room.players.set(ws, { name, ready: false, isHost: false });
+    room.players.set(ws, { name, ready: false, isHost: false, serverId: allocatePlayerId() });
     return null;
   }
 

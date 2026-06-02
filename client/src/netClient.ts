@@ -220,6 +220,7 @@ export class NetClient {
         this.state.name = msg.name;
         this.state.isHost = true;
         this.state.phase = 'lobby';
+        this.state.myPlayerId = msg.serverId ?? null;
         this.state.error = null;
         break;
 
@@ -228,6 +229,7 @@ export class NetClient {
         this.state.name = msg.name;
         this.state.isHost = false;
         this.state.phase = 'lobby';
+        this.state.myPlayerId = msg.serverId ?? null;
         this.state.error = null;
         break;
 

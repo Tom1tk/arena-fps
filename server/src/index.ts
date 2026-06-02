@@ -170,11 +170,13 @@ function handleMessage(ws: WebSocket, msg: any): void {
         return;
       }
       const code = lobbyManager.createRoom(ws, name);
+      const playerInfo = lobbyManager.getPlayer(ws);
       ws.send(JSON.stringify({
         type: 'created',
         code,
         name,
         isHost: true,
+        serverId: playerInfo!.player.serverId,
       }));
       lobbyManager.broadcastRoster(code);
       console.log(`[Lobby] Room ${code} created by ${name}`);
@@ -204,10 +206,12 @@ function handleMessage(ws: WebSocket, msg: any): void {
         ws.send(JSON.stringify({ type: 'error', message: joinError.error }));
         return;
       }
+      const joinedPlayer = lobbyManager.getPlayer(ws);
       ws.send(JSON.stringify({
         type: 'joined',
         code,
         name,
+        serverId: joinedPlayer!.player.serverId,
       }));
       lobbyManager.broadcastRoster(code);
       console.log(`[Lobby] ${name} joined room ${code}`);

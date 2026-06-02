@@ -144,9 +144,11 @@ export class NetGame {
     const ackSeq = snapshot.ackInputSeq ?? 0;
 
     // --- Reconcile own player ---
-    const myState = snapshot.players.find(p => p.name === this.net.name);
+    // BUG FIX: match on numeric id, not name (names not unique)
+    const myId = this.net.myPlayerId;
+    const myState = snapshot.players.find(p => p.id === myId);
     if (myState) {
-      // Determine or confirm my ID
+      // Set myId on first snapshot
       if (this.myId === null) {
         this.myId = myState.id;
       }
@@ -213,7 +215,7 @@ export class NetGame {
 
     // --- Update remote entities ---
     for (const ps of snapshot.players) {
-      const isMe = ps.id === this.myId || ps.name === this.net.name;
+      const isMe = ps.id === this.myId;
       let entity = this.entities.get(ps.id);
 
       if (!entity) {
