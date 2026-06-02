@@ -16,17 +16,26 @@ export interface RosterEntry {
   isHost: boolean;
 }
 
+export interface ScoreboardEntry {
+  id: number;
+  name: string;
+  kills: number;
+  deaths: number;
+  left: boolean;
+}
+
 export interface LobbyState {
   phase: 'disconnected' | 'connected' | 'lobby' | 'readying' | 'countdown' | 'playing' | 'post_match';
   code: string | null;
   name: string | null;
   isHost: boolean;
   roster: RosterEntry[];
-  countdown: number;
+  countdown: number | null;
   error: string | null;
-  // Game state (populated during 'playing' phase)
+  // Game state (populated during 'playing' and 'post_match' phases)
   latestSnapshot: Snapshot | null;
   myPlayerId: number | null;
+  scoreboard?: ScoreboardEntry[];
 }
 
 export type LobbyMessage = Record<string, any>;
@@ -56,11 +65,12 @@ export class NetClient {
   get name(): string | null { return this.state.name; }
   get isHost(): boolean { return this.state.isHost; }
   get roster(): RosterEntry[] { return this.state.roster; }
-  get countdown(): number { return this.state.countdown; }
+  get countdown(): number | null { return this.state.countdown; }
   get error(): string | null { return this.state.error; }
   get connected(): boolean { return this.ws !== null && this.ws.readyState === WebSocket.OPEN; }
   get latestSnapshot(): Snapshot | null { return this.state.latestSnapshot; }
   get myPlayerId(): number | null { return this.state.myPlayerId; }
+  get scoreboard(): ScoreboardEntry[] | undefined { return this.state.scoreboard; }
 
   /** Subscribe to state changes. */
   onChange(fn: () => void): () => void {
@@ -267,9 +277,10 @@ export class NetClient {
           this.state.countdown = 0;
         } else {
           this.state.phase = 'countdown';
-          this.state.countdown = msg.countdown || 3;
+          const cdVal = msg.countdown || 3;
+          this.state.countdown = cdVal;
           // Start local countdown timer
-          this.startCountdown(this.state.countdown);
+          this.startCountdown(cdVal);
         }
         this.state.error = null;
         this.notify();
@@ -306,6 +317,22 @@ export class NetClient {
         this.notify();
         break;
 
+      case 'match_end': {
+        this.state.phase = 'post_match';
+        this.state.scoreboard = msg.scoreboard;
+        this.notify();
+        break;
+      }
+
+      case 'return_to_lobby': {
+        this.state.phase = 'lobby';
+        this.state.countdown = null;
+        this.state.scoreboard = undefined;
+        this.state.roster = msg.roster || [];
+        this.notify();
+        break;
+      }
+
       default:
         console.log(`[Net] Unknown message: ${msg.type}`);
     }
@@ -326,8 +353,10 @@ export class NetClient {
     // Clear any existing countdown
     if (this.countdownTimer) { clearInterval(this.countdownTimer); this.countdownTimer = null; }
     this.countdownTimer = setInterval(() => {
-      this.state.countdown -= 1;
-      if (this.state.countdown <= 0) {
+      const cd = this.state.countdown;
+      if (cd == null) return;
+      this.state.countdown = cd - 1;
+      if (cd - 1 <= 0) {
         if (this.countdownTimer) { clearInterval(this.countdownTimer); this.countdownTimer = null; }
         this.state.countdown = 0;
         this.state.phase = 'playing';

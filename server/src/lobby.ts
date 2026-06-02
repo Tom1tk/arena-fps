@@ -12,6 +12,7 @@ export interface PlayerInfo {
   ready: boolean;
   isHost: boolean;
   serverId: number;  // numeric player id, allocated at join
+  left?: boolean;    // true if player disconnected mid-match
 }
 
 export interface Room {
@@ -80,13 +81,24 @@ export class LobbyManager {
   joinRoom(ws: WebSocket, name: string, code: string): { error?: string } | null {
     const room = this.rooms.get(code);
     if (!room) return { error: 'Lobby not found' };
-    if (room.phase === 'playing' || room.phase === 'post_match') {
-      return { error: 'Match in progress' };
+    if (room.phase === 'post_match') {
+      return { error: 'Match ended' };
+    }
+    if (room.phase === 'countdown') {
+      return { error: 'Match starting' };
     }
     if (room.players.size >= MAX_PLAYERS) return { error: 'Lobby full' };
     if (room.players.has(ws)) return { error: 'Already in room' };
 
-    room.players.set(ws, { name, ready: false, isHost: false, serverId: allocatePlayerId() });
+    const serverId = allocatePlayerId();
+    room.players.set(ws, { name, ready: false, isHost: false, serverId });
+
+    // If joining mid-match, spawn into gameWorld immediately
+    if (room.phase === 'playing' && room.gameWorld) {
+      room.gameWorld.addPlayer(ws, name, serverId);
+    }
+
+    this.broadcastRoster(code);
     return null;
   }
 
@@ -96,11 +108,24 @@ export class LobbyManager {
   leaveRoom(ws: WebSocket): { code?: string; room?: Room } {
     for (const [code, room] of this.rooms) {
       if (room.players.has(ws)) {
+        const info = room.players.get(ws)!;
         const wasHost = room.players.get(ws)?.isHost;
-        room.players.delete(ws);
 
         // Host left: pick new host or disband
         if (wasHost) {
+          // During playing phase, host disconnect → disband
+          if (room.phase === 'playing') {
+            // Remove all players from gameWorld before disbanding
+            if (room.gameWorld) {
+              for (const [playerWs] of room.players) {
+                const playerInfo = room.players.get(playerWs)!;
+                room.gameWorld.removePlayer(playerInfo.serverId);
+              }
+            }
+            this.broadcast(code, { type: 'disband', reason: 'Host disconnected' });
+            this.rooms.delete(code);
+            return { code, room };
+          }
           if (room.players.size === 0) {
             this.rooms.delete(code);
             return { code, room };
@@ -114,6 +139,19 @@ export class LobbyManager {
           // Notify all remaining players of host transfer
           this.broadcast(code, { type: 'host_transfer', newHost: newHostPlayer?.name ?? 'unknown' });
         }
+
+        // Mid-match leave: tag the leaver with left: true before removing
+        if (room.phase === 'playing') {
+          info.left = true;
+          // Broadcast roster_update showing the leaver tagged as left
+          this.broadcastRoster(code);
+          // Remove from gameWorld
+          if (room.gameWorld) {
+            room.gameWorld.removePlayer(info.serverId);
+          }
+        }
+
+        room.players.delete(ws);
 
         return { code, room };
       }

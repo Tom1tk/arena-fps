@@ -17,7 +17,7 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { LobbyManager } from './lobby.js';
 import { GameWorld } from './gameWorld.js';
-import { MAX_PLAYERS, NAME_MIN, NAME_MAX, HEARTBEAT_INTERVAL_S, HEARTBEAT_MISS_LIMIT, SERVER_TICK_HZ, TICK_DT } from '../../shared/constants.js';
+import { MAX_PLAYERS, NAME_MIN, NAME_MAX, HEARTBEAT_INTERVAL_S, HEARTBEAT_MISS_LIMIT, SERVER_TICK_HZ, TICK_DT, POST_MATCH_DURATION_S } from '../../shared/constants.js';
 import type { InputFrame } from '../../shared/types.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -347,6 +347,73 @@ const gameTickInterval = setInterval(() => {
           events: snapshot.events,
         });
         playerWs.send(data);
+      }
+
+      // When match just ended, broadcast match_end with scoreboard once
+      if (room.gameWorld.matchEnded && room.gameWorld.matchEndedAt) {
+        const elapsed = (Date.now() - room.gameWorld.matchEndedAt) / 1000;
+        if (elapsed < 0.1) {
+          // Broadcast match_end with scoreboard (only once, on first tick after end)
+          const scoreboard = [...room.gameWorld.players.values()].map(p => ({
+            id: p.id,
+            name: p.name,
+            kills: p.kills,
+            deaths: p.deaths,
+            left: p.connected,
+          }));
+          lobbyManager.broadcast(room.code, {
+            type: 'match_end',
+            scoreboard,
+          });
+        }
+        if (elapsed >= POST_MATCH_DURATION_S) {
+          // Transition to post_match, then reset to lobby
+          room.phase = 'post_match';
+          const roster = [...room.players.values()];
+          lobbyManager.broadcast(room.code, { type: 'return_to_lobby', roster });
+          room.gameWorld = null;
+          for (const [, p] of room.players) {
+            p.ready = false;
+          }
+          room.phase = 'lobby';
+          lobbyManager.broadcastRoster(room.code);
+          console.log(`[Game] Room ${room.code} reset to lobby`);
+        }
+      }
+    }
+
+    // Handle post_match phase — keep snapshots flowing briefly before reset
+    if (room.phase === 'post_match' && room.gameWorld) {
+      if (room.gameWorld.matchEndedAt) {
+        const elapsed = (Date.now() - room.gameWorld.matchEndedAt) / 1000;
+        if (elapsed < POST_MATCH_DURATION_S) {
+          // Still within post-match window, keep ticking for snapshots
+          const snapshot = room.gameWorld.tick();
+          for (const [playerWs] of room.players) {
+            if (playerWs.readyState !== WebSocket.OPEN) continue;
+            const player = [...room.gameWorld.players.values()].find(p => p.ws === playerWs);
+            const ackInputSeq = player ? player.ackInputSeq : 0;
+            const data = JSON.stringify({
+              type: 'snapshot',
+              tick: snapshot.serverTick,
+              ackInputSeq,
+              players: snapshot.players,
+              events: snapshot.events,
+            });
+            playerWs.send(data);
+          }
+        } else {
+          // Post-match timer expired — reset to lobby
+          const roster = [...room.players.values()];
+          lobbyManager.broadcast(room.code, { type: 'return_to_lobby', roster });
+          room.gameWorld = null;
+          for (const [, p] of room.players) {
+            p.ready = false;
+          }
+          room.phase = 'lobby';
+          lobbyManager.broadcastRoster(room.code);
+          console.log(`[Game] Room ${room.code} reset to lobby`);
+        }
       }
     }
   }

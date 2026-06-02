@@ -114,6 +114,7 @@ export class GameWorld {
   serverTick = 0;
   events: SnapshotEvent[] = [];
   matchEnded = false;
+  matchEndedAt: number | null = null;
   private recentSpawns: Array<{ pos: { x: number; y: number; z: number }; time: number }> = [];
 
   constructor(public botCount: number = 5) {
@@ -277,6 +278,18 @@ export class GameWorld {
         continue;
       }
 
+      // After match end, skip input processing — still run physics for falling after death
+      if (this.matchEnded) {
+        playerStep(p.sim, {
+          seq: this.serverTick, viewTick: 0,
+          moveX: 0, moveZ: 0,
+          yaw: p.sim.yaw, pitch: p.sim.pitch,
+          buttons: 0,
+        }, dt, WORLD_BOUNDS, OBSTACLES, []);
+        this.recordLagCompEntry(p);
+        continue;
+      }
+
       // --- Drain: collect ALL new inputs, sort ascending, process up to cap ---
       // BUG FIX (Bug 2): was only picking the single highest-seq input.
       const newInputs: Array<{ seq: number; input: InputFrame }> = [];
@@ -339,6 +352,7 @@ export class GameWorld {
       for (const p of this.players.values()) {
         if (p.kills >= KILL_GOAL) {
           this.matchEnded = true;
+          this.matchEndedAt = Date.now();
           this.events.push({ type: 'MatchEnd', id: p.id, kills: p.kills });
           break;
         }

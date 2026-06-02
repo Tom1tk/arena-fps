@@ -470,6 +470,7 @@ const prevPredictedPos = { x: 0, y: 1.6, z: 10 };
 type MatchPhase = 'playing' | 'post_match';
 let matchPhase: MatchPhase = 'playing';
 let postMatchTimer = 0;
+let postMatchStartTime = 0;
 let isDead = false;
 let playerRespawnTimer = 0;
 let killerName = '';
@@ -926,6 +927,7 @@ function initGame(networked: boolean = false): void {
   isDead = false;
   matchPhase = 'playing';
   postMatchTimer = 0;
+  postMatchStartTime = 0;
   recentSpawns = [];
   killFeed = [];
   inputSeq = 0;
@@ -1019,6 +1021,41 @@ function renderLoop(now: number): void {
 
   // --- NETWORKED MODE: tick-locked client prediction + server reconciliation ---
   if (networkedMode && netGame && inputSource) {
+    // --- Handle post-match state: stop input/prediction, show post-match overlay ---
+    if (netClient.phase === 'post_match') {
+      // Set start time on first entry
+      if (!postMatchStartTime) postMatchStartTime = Date.now();
+      postMatchTimer = Math.max(0, POST_MATCH_DURATION_S - (Date.now() - postMatchStartTime) / 1000);
+
+      // Show post-match overlay with scoreboard
+      postMatchOverlay.style.display = 'flex';
+      const sb = netClient.scoreboard;
+      if (sb && sb.length > 0) {
+        const sorted = [...sb].sort((a, b) => b.kills - a.kills);
+        postMatchStats.innerHTML = sorted
+          .map((e, i) => `${i + 1}. ${e.name}: ${e.kills}K / ${e.deaths}D${e.left ? ' (left)' : ''}`)
+          .join('<br>');
+      } else {
+        postMatchStats.innerHTML = `Kills: ${kills} | Deaths: ${playerDeaths}<br>K/D: ${(kills / Math.max(1, playerDeaths)).toFixed(1)}`;
+      }
+      postMatchCountdown.textContent = `Return to lobby in ${Math.ceil(postMatchTimer)}s...`;
+
+      // Render scene one more time for the background
+      renderer.render(scene, camera);
+      return;
+    }
+
+    // Handle return_to_lobby: clean up and show title
+    if (netClient.phase === 'lobby') {
+      endMatch();
+      netClient.disconnect();
+      postMatchOverlay.style.display = 'none';
+      postMatchStartTime = 0;
+      titleOverlay.style.display = 'flex';
+      hideAllSubMenus();
+      return;
+    }
+
     // --- Tick-locked accumulator (mirrors practice simAccum pattern) ---
     // Cap frameDt to avoid spiral-of-death; accumulate and process one tick per input.
     netAccum += Math.min(frameDt, 0.1);

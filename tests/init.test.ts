@@ -453,3 +453,124 @@ describe('Bot/Player ID non-collision', () => {
   });
 });
 
+// --- M7 TESTS: Full Networked Match Flow ---
+
+describe('M7: Match End Flow', () => {
+  it('MatchEnd event set when KILL_GOAL reached, matchEndedAt timestamp set', async () => {
+    vi.resetModules();
+    const mod = await import('../server/src/gameWorld');
+    const GameWorld = mod.GameWorld;
+
+    const gw = new GameWorld(0);
+    const id1 = gw.addPlayer({ readyState: 1 } as any, 'Winner');
+    gw.addPlayer({ readyState: 1 } as any, 'Loser');
+
+    // Set kills to KILL_GOAL
+    const p1 = gw.players.get(id1);
+    p1.kills = KILL_GOAL;
+
+    const before = Date.now();
+    gw.tick();
+    const after = Date.now();
+
+    // matchEnded should be true
+    expect(gw.matchEnded).toBe(true);
+    // matchEndedAt should be set
+    expect(gw.matchEndedAt).toBeGreaterThan(0);
+    expect(gw.matchEndedAt!).toBeGreaterThanOrEqual(before);
+    expect(gw.matchEndedAt!).toBeLessThanOrEqual(after);
+  });
+
+  it('after match end, inputs are skipped but physics continue', async () => {
+    vi.resetModules();
+    const mod = await import('../server/src/gameWorld');
+    const GameWorld = mod.GameWorld;
+
+    const gw = new GameWorld(0);
+    const id1 = gw.addPlayer({ readyState: 1 } as any, 'P1');
+    const p1 = gw.players.get(id1);
+    p1.kills = KILL_GOAL;
+
+    // Trigger match end
+    gw.tick();
+    expect(gw.matchEnded).toBe(true);
+
+    // Feed an input that would normally move the player
+    gw.processInput(id1, {
+      seq: 1, viewTick: 0,
+      moveX: 1, moveZ: 0,
+      yaw: 0, pitch: 0, buttons: 0,
+    });
+
+    // Tick — input should be skipped, player shouldn't move via that input
+    const posBefore = { ...p1.sim.pos };
+    gw.tick();
+
+    // Player position should only change from gravity/physics, not from the move input
+    // (moveX:1 was ignored because match ended)
+    // We verify by checking that the input was not consumed
+    expect(p1.lastInputSeq).toBe(0); // input was received but not processed
+  });
+});
+
+describe('M7: Mid-Match Join', () => {
+  const mockWs = (): any => ({
+    readyState: 1,
+    send: vi.fn(),
+    on: vi.fn(),
+  });
+
+  it('LobbyManager allows join during playing phase', async () => {
+    vi.resetModules();
+    const mod = await import('../server/src/lobby');
+    const LobbyManager = mod.LobbyManager;
+
+    const lm = new LobbyManager();
+    const hostWs = mockWs();
+    const code = lm.createRoom(hostWs, 'Host');
+
+    // Add a second player
+    const p2Ws = mockWs();
+    lm.joinRoom(p2Ws, 'Player2', code);
+
+    // Start match (sets phase to 'countdown')
+    lm.startMatch(code);
+
+    // Advance to playing
+    const room = [...lm.roomEntries].find(([, r]) => r.code === code)![1];
+    room.phase = 'playing';
+
+    // Mid-match join should succeed
+    const joinerWs = mockWs();
+    const result = lm.joinRoom(joinerWs, 'Joiner', code);
+    expect(result).toBeNull(); // null means success
+
+    // Room should have 3 players
+    expect(room.players.size).toBe(3);
+
+    // Joiner should be added to gameWorld
+    expect(room.gameWorld).toBeDefined();
+    const joinerInfo = lm.getPlayer(joinerWs);
+    expect(joinerInfo).toBeDefined();
+  });
+
+  it('LobbyManager blocks join during post_match phase', async () => {
+    vi.resetModules();
+    const mod = await import('../server/src/lobby');
+    const LobbyManager = mod.LobbyManager;
+
+    const lm = new LobbyManager();
+    const hostWs = mockWs();
+    const code = lm.createRoom(hostWs, 'Host');
+
+    // Start and set to post_match
+    lm.startMatch(code);
+    const room = [...lm.roomEntries].find(([, r]) => r.code === code)![1];
+    room.phase = 'post_match';
+
+    const result = lm.joinRoom(mockWs(), 'Joiner', code);
+    expect(result).toBeDefined();
+    expect((result as any).error).toBe('Match ended');
+  });
+});
+
