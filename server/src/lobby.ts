@@ -252,7 +252,9 @@ export class LobbyManager {
     if (!room || room.phase === 'playing') return false;
 
     room.phase = 'countdown';
-    room.gameWorld = new GameWorld();
+    // No bots for 2+ player networked matches; 1 player gets 5 bots for practice
+    const botCount = room.players.size >= 2 ? 0 : 5;
+    room.gameWorld = new GameWorld(botCount);
     room.startedAt = Date.now();
 
     // Add all players to game world

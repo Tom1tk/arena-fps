@@ -54,6 +54,7 @@ export interface ServerPlayer {
   respawnTimer: number;
   inputBuffer: Map<number, InputFrame>;
   lastInputSeq: number;
+  currentInput: InputFrame | null;
   connected: boolean;
 }
 
@@ -82,9 +83,10 @@ export class GameWorld {
   events: SnapshotEvent[] = [];
   private recentSpawns: Array<{ pos: { x: number; y: number; z: number }; time: number }> = [];
 
-  constructor() {
+  constructor(public botCount: number = 5) {
+    if (botCount <= 0) return;
     const botNames = ['Alpha', 'Bravo', 'Charlie', 'Delta', 'Echo'];
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < botCount && i < 5; i++) {
       const sp = SPAWN_POSITIONS[i];
       this.bots.push({
         id: nextBotId++,
@@ -121,7 +123,7 @@ export class GameWorld {
       hp: PLAYER_MAX_HP, ammo: MAG_SIZE,
       kills: 0, deaths: 0, alive: true,
       reloading: false, reloadTimer: 0, fireCooldown: 0, respawnTimer: 0,
-      inputBuffer: new Map(), lastInputSeq: 0, connected: true,
+      inputBuffer: new Map(), lastInputSeq: 0, currentInput: null, connected: true,
     };
     this.players.set(id, p);
     this.recentSpawns.push({ pos: { ...p.sim.pos }, time: Date.now() / 1000 });
@@ -136,10 +138,9 @@ export class GameWorld {
   processInput(playerId: number, input: InputFrame): void {
     const p = this.players.get(playerId);
     if (!p) return;
-    if (input.seq > p.lastInputSeq) {
-      p.inputBuffer.set(input.seq, input);
-      p.lastInputSeq = input.seq;
-    }
+    // Always accept the latest input — client sends every frame.
+    // Store as current input to be consumed on next tick.
+    p.currentInput = input;
   }
 
   tick(): Snapshot {
@@ -148,25 +149,19 @@ export class GameWorld {
     this.events = [];
 
     for (const p of this.players.values()) {
-      if (!p.connected) continue;
+        if (!p.connected) continue;
 
-      if (!p.alive) {
-        p.respawnTimer -= dt;
-        if (p.respawnTimer <= 0) this.doRespawnPlayer(p);
-        continue;
-      }
+        if (!p.alive) {
+          p.respawnTimer -= dt;
+          if (p.respawnTimer <= 0) this.doRespawnPlayer(p);
+          continue;
+        }
 
-      // Get latest input
-      let input: InputFrame | null = null;
-      for (const [seq, buf] of p.inputBuffer) {
-        if (seq <= this.serverTick) input = buf;
-      }
-      for (const [seq] of p.inputBuffer) {
-        if (seq <= this.serverTick) p.inputBuffer.delete(seq);
-      }
-      if (!input) continue;
+        // Use latest input from client
+        const input = p.currentInput;
+        if (!input) continue;
 
-      // Reload
+        // Reload
       if (p.reloading) {
         p.reloadTimer -= dt;
         if (p.reloadTimer <= 0) {
@@ -248,40 +243,83 @@ export class GameWorld {
 
   private doHitscan(origin: { x: number; y: number; z: number },
     dx: number, dy: number, dz: number, shooter: ServerPlayer): void {
+    const hitRadius = 0.5; // ~0.25^2 for body check
     let closest = 200;
-    let hit: ServerBot | null = null;
+    let hitPlayer: ServerPlayer | null = null;
+    let hitBot: ServerBot | null = null;
     let head = false;
+
+    // Check other players
+    for (const p of this.players.values()) {
+      if (p === shooter || !p.alive) continue;
+      const result = this.raycastEntity(origin, dx, dy, dz, p.sim.pos, hitRadius);
+      if (result && result.dist < closest) {
+        closest = result.dist;
+        hitPlayer = p;
+        head = result.head;
+      }
+    }
+
+    // Check bots
     for (const b of this.bots) {
       if (!b.alive) continue;
-      const sx = b.sim.pos.x - origin.x;
-      const sy = b.sim.pos.y - origin.y;
-      const sz = b.sim.pos.z - origin.z;
-      const dot = sx * dx + sy * dy + sz * dz;
-      if (dot < 0 || dot >= closest) continue;
-      const cx = origin.x + dx * dot;
-      const cy = origin.y + dy * dot;
-      const cz = origin.z + dz * dot;
-      const ex = cx - b.sim.pos.x;
-      const ey = cy - b.sim.pos.y;
-      const ez = cz - b.sim.pos.z;
-      if (ex * ex + ey * ey + ez * ez < 0.25) {
-        closest = dot;
-        hit = b;
-        head = cy > b.sim.pos.y + 0.2;
+      const result = this.raycastEntity(origin, dx, dy, dz, b.sim.pos, hitRadius);
+      if (result && result.dist < closest) {
+        closest = result.dist;
+        hitBot = b;
+        head = result.head;
       }
     }
-    if (hit) {
+
+    // Apply damage
+    if (hitPlayer) {
       const dmg = head ? DAMAGE_HEAD : DAMAGE_BODY;
-      hit.hp -= dmg;
-      this.events.push({ type: 'Hit', by: shooter.id, target: hit.id, dmg, head });
-      if (hit.hp <= 0) {
-        hit.alive = false;
-        hit.deaths++;
-        hit.deathTimer = RESPAWN_DELAY_S;
+      hitPlayer.hp -= dmg;
+      this.events.push({ type: 'Hit', by: shooter.id, target: hitPlayer.id, dmg, head });
+      if (hitPlayer.hp <= 0) {
+        hitPlayer.alive = false;
+        hitPlayer.deaths++;
+        hitPlayer.respawnTimer = RESPAWN_DELAY_S;
         shooter.kills++;
-        this.events.push({ type: 'Kill', killer: shooter.id, victim: hit.id });
+        this.events.push({ type: 'Kill', killer: shooter.id, victim: hitPlayer.id });
+      }
+    } else if (hitBot) {
+      const dmg = head ? DAMAGE_HEAD : DAMAGE_BODY;
+      hitBot.hp -= dmg;
+      this.events.push({ type: 'Hit', by: shooter.id, target: hitBot.id, dmg, head });
+      if (hitBot.hp <= 0) {
+        hitBot.alive = false;
+        hitBot.deaths++;
+        hitBot.deathTimer = RESPAWN_DELAY_S;
+        shooter.kills++;
+        this.events.push({ type: 'Kill', killer: shooter.id, victim: hitBot.id });
       }
     }
+  }
+
+  /** Raycast against a single entity position. Returns {dist, head} or null. */
+  private raycastEntity(
+    origin: { x: number; y: number; z: number },
+    dx: number, dy: number, dz: number,
+    target: { x: number; y: number; z: number },
+    radius: number,
+  ): { dist: number; head: boolean } | null {
+    const sx = target.x - origin.x;
+    const sy = target.y - origin.y;
+    const sz = target.z - origin.z;
+    const dot = sx * dx + sy * dy + sz * dz;
+    if (dot < 0) return null;
+    const cx = origin.x + dx * dot;
+    const cy = origin.y + dy * dot;
+    const cz = origin.z + dz * dot;
+    const ex = cx - target.x;
+    const ey = cy - target.y;
+    const ez = cz - target.z;
+    const dist2 = ex * ex + ey * ey + ez * ez;
+    if (dist2 < radius * radius) {
+      return { dist: dot, head: cy > target.y + 0.2 };
+    }
+    return null;
   }
 
   private doBotAI(bot: ServerBot, dt: number): void {

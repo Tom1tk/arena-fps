@@ -855,11 +855,13 @@ function initGame(networked: boolean = false): void {
   inputSource.setAngles(0, 0);
 
   // Reset player
-  player.pos = { x: 0, y: 1.6, z: 10 };
-  player.vel = { x: 0, y: 0, z: 0 };
-  player.yaw = 0;
-  player.pitch = 0;
-  player.grounded = false;
+  if (!networked) {
+    player.pos = { x: 0, y: 1.6, z: 10 };
+    player.vel = { x: 0, y: 0, z: 0 };
+    player.yaw = 0;
+    player.pitch = 0;
+    player.grounded = false;
+  }
   hp = PLAYER_MAX_HP;
   ammo = MAG_SIZE;
   kills = 0;
@@ -964,21 +966,24 @@ function renderLoop(now: number): void {
     // Update from server snapshot
     netGame.update();
     const me = netGame.getMe();
-    if (me && me.alive) {
-      // Camera position from server
+    if (me) {
+      // Position from server, rotation from client (smooth)
       camera.position.set(me.pos.x, me.pos.y, me.pos.z);
       camera.rotation.order = 'YXZ';
-      camera.rotation.y = me.yaw;
-      camera.rotation.x = me.pitch;
+      camera.rotation.y = yaw;
+      camera.rotation.x = pitch;
 
       // Update HUD from server state
       hp = me.hp;
       ammo = me.ammo;
       isDead = !me.alive;
-    } else if (me && !me.alive) {
-      // Dead — show death overlay
-      isDead = true;
-      deathOverlay.style.display = 'flex';
+
+      // Handle death overlay
+      if (!me.alive) {
+        deathOverlay.style.display = 'flex';
+      } else {
+        deathOverlay.style.display = 'none';
+      }
     }
 
     // Update remote players
