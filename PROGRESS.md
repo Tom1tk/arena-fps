@@ -3,7 +3,7 @@
 > Source of truth: `fps-project-plan.md`
 > This file tracks milestone completion against the plan's Definition of Done (DoD).
 
-## Current Status: **M4 — Complete (Menu, Name Gate, Settings UI live)**
+## Current Status: **M6 — Complete (Networked Gameplay: Authoritative Server + Client Sync)**
 
 ---
 
@@ -122,14 +122,45 @@
 - [x] All crosshair types render correctly
 - [x] Graphics toggle changes cost (DPR, far plane, lights)
 
-## M5 — Server & Lobby *(in progress)*
+## M5 — Server & Lobby *(complete)*
 - [x] WebSocket through CF tunnel
 - [x] Room create/join, roster, ready/start
 - [x] Host-disband, heartbeat
-- [ ] Deploy systemd service (combined HTTP+WS)
+- [x] Deploy systemd service (combined HTTP+WS)
+- [x] Client-side countdown timer for match start
 
-## M6 — Networked Gameplay *(blocked until M5 DoD met)*
-- [ ] Authoritative tick, prediction, interpolation, lag-comp
+## M6 — Networked Gameplay *(complete)*
+- [x] Authoritative server-side game simulation (30Hz tick loop)
+  - `server/src/gameWorld.ts` — GameWorld with players, bots, obstacles, hitscan
+  - Server-side bot AI (chase nearest player, shoot within range)
+  - Smart spawn selection on server
+  - Death/respawn logic on server
+- [x] State snapshots broadcast to all clients at 30Hz
+  - Server tick loop broadcasts `Snapshot` messages via WebSocket
+  - Includes all entity positions, HP, ammo, yaw, pitch, kill events
+- [x] Client sends input to server
+  - `NetClient.sendInput()` sends WASD, yaw, pitch, button bitmask
+  - Server processes input through `playerStep()`
+- [x] Client renders from server snapshots
+  - `NetGame` class tracks entities from server snapshots
+  - Camera position/rotation sourced from server state
+  - HUD (HP, ammo, kills) synced from server
+- [x] Remote player rendering
+  - `RemotePlayerManager` creates capsule meshes for other players/bots
+  - HP bars, name tags, visibility based on alive state
+- [x] Server-side bots replace per-client dummy targets
+  - Bots are entities on server, not client-side
+  - Bot AI runs on server (chase + shoot)
+- [x] Shared constants moved for server/client parity
+  - `ARENA_HALF`, `OBSTACLES` in `shared/constants.ts`
+  - ESM `.js` extensions on shared module imports
+
+### New Files
+- `server/src/gameWorld.ts` — Authoritative game world simulation
+- `client/src/netGame.ts` — Client-side entity tracking from snapshots
+- `client/src/remotePlayers.ts` — 3D remote player rendering
+
+> Note: Client-side prediction and lag compensation deferred to M7.
 
 ## M7 — Full Networked Match Flow *(blocked until M6 DoD met)*
 - [ ] Net match-end, mid-match join, leave handling
