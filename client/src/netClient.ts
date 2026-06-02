@@ -257,12 +257,20 @@ export class NetClient {
         break;
 
       case 'match_start':
-        this.state.phase = 'countdown';
-        this.state.countdown = msg.countdown || 3;
+        // Server tells us the current phase. Respect it.
+        if (msg.phase === 'playing') {
+          // Server already transitioned — skip local countdown
+          if (this.countdownTimer) { clearInterval(this.countdownTimer); this.countdownTimer = null; }
+          this.state.phase = 'playing';
+          this.state.countdown = 0;
+        } else {
+          this.state.phase = 'countdown';
+          this.state.countdown = msg.countdown || 3;
+          // Start local countdown timer
+          this.startCountdown(this.state.countdown);
+        }
         this.state.error = null;
         this.notify();
-        // Start local countdown timer
-        this.startCountdown(this.state.countdown ?? 3);
         break;
 
       case 'ready_state':

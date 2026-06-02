@@ -120,7 +120,12 @@ export class NetGame {
   /** Events buffer */
   pendingEvents: SnapshotEvent[] = [];
 
-  constructor(public readonly net: NetClient) {}
+  constructor(public readonly net: NetClient) {
+    // Apply any snapshot that arrived during countdown before initGame ran
+    if (net.latestSnapshot) {
+      this.update(net.latestSnapshot);
+    }
+  }
 
   /**
    * Process a server snapshot.
