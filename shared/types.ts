@@ -37,6 +37,7 @@ export interface PlayerState {
   crouch: boolean;
   flags: number;        // bitmask for additional state (reloading, etc.)
   kills: number;
+  deaths: number;
 }
 
 // --- Snapshot events ---

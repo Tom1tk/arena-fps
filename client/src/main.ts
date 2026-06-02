@@ -448,6 +448,12 @@ let netGame: NetGame | null = null;
 let remotePlayers: RemotePlayerManager | null = null;
 // Input sequence counter for server
 let inputSeq = 0;
+// Networked interpolation: smooth camera position from server snapshots
+const netCamPos = { x: 0, y: 1.6, z: 10 };
+const netCamTarget = { x: 0, y: 1.6, z: 10 };
+let netCamLerpSpeed = 12; // per second lerp speed for position smoothing
+// Track last processed event tick to avoid re-processing
+let lastProcessedTick = 0;
 
 // --- M3: Match state ---
 type MatchPhase = 'playing' | 'post_match';
@@ -900,6 +906,9 @@ function initGame(networked: boolean = false): void {
     dummyTargets = [];
     // Camera starts at origin, server will set position
     camera.position.set(0, 1.6, 10);
+    netCamPos.x = 0; netCamPos.y = 1.6; netCamPos.z = 10;
+    netCamTarget.x = 0; netCamTarget.y = 1.6; netCamTarget.z = 10;
+    lastProcessedTick = 0;
     console.log('[Game] Started in NETWORKED mode');
   } else {
     // Practice mode: local simulation
@@ -967,8 +976,17 @@ function renderLoop(now: number): void {
     netGame.update();
     const me = netGame.getMe();
     if (me) {
-      // Position from server, rotation from client (smooth)
-      camera.position.set(me.pos.x, me.pos.y, me.pos.z);
+      // Smooth camera position via lerp (reduces jitter from 30Hz snapshots)
+      netCamTarget.x = me.pos.x;
+      netCamTarget.y = me.pos.y;
+      netCamTarget.z = me.pos.z;
+      const lerpFactor = 1 - Math.exp(-netCamLerpSpeed * frameDt);
+      netCamPos.x += (netCamTarget.x - netCamPos.x) * lerpFactor;
+      netCamPos.y += (netCamTarget.y - netCamPos.y) * lerpFactor;
+      netCamPos.z += (netCamTarget.z - netCamPos.z) * lerpFactor;
+
+      // Position from smoothed server pos, rotation from client (smooth)
+      camera.position.set(netCamPos.x, netCamPos.y, netCamPos.z);
       camera.rotation.order = 'YXZ';
       camera.rotation.y = yaw;
       camera.rotation.x = pitch;
@@ -977,6 +995,8 @@ function renderLoop(now: number): void {
       hp = me.hp;
       ammo = me.ammo;
       isDead = !me.alive;
+      kills = me.kills;
+      playerDeaths = me.deaths ?? playerDeaths;
 
       // Handle death overlay
       if (!me.alive) {
@@ -991,20 +1011,45 @@ function renderLoop(now: number): void {
       remotePlayers.update(netGame.getAll(), camera);
     }
 
-    // Process server events for kill feed
-    for (const evt of netGame.pendingEvents) {
-      if (evt.type === 'Kill') {
-        const killer = netGame.get((evt as any).killer);
-        const victim = netGame.get((evt as any).victim);
-        if (killer && victim) {
-          addKillFeedEntry(killer.name, victim.name, false);
+    // Process server events — only once per new tick to avoid re-firing
+    if (netGame.lastTick !== lastProcessedTick) {
+      lastProcessedTick = netGame.lastTick;
+      for (const evt of netGame.pendingEvents) {
+        if (evt.type === 'Kill') {
+          const killer = netGame.get((evt as any).killer);
+          const victim = netGame.get((evt as any).victim);
+          if (killer && victim) {
+            addKillFeedEntry(killer.name, victim.name, false);
+            playKill();
+          }
+        }
+        if (evt.type === 'Hit') {
+          const hitEvt = evt as any;
+          if (hitEvt.by === me?.id) {
+            showHitMarker();
+          } else if (hitEvt.target === me?.id) {
+            showDamageIndicator();
+          }
         }
       }
-      if (evt.type === 'Hit') {
-        showHitMarker();
-      }
     }
-  } else {
+
+    // --- Networked viewmodel & animations ---
+    if (viewmodel && inputSource) {
+      viewmodel.update(frameDt, inputSource.getFirePressed());
+    }
+
+    // --- Networked scoreboard ---
+    if (netGame) {
+      const allEntities = netGame.getAll();
+      let sbText = `${getPlayerName()}: ${kills}K / ${playerDeaths}D`;
+      scoreboardEl.innerHTML = sbText;
+    }
+
+    return; // Skip the practice-mode simulation below
+  }
+
+  // --- PRACTICE MODE: local simulation ---
   simAccum += frameDt;
   while (simAccum >= TICK_DT) {
     // Don't simulate movement/shooting when dead — only countdown
@@ -1139,7 +1184,6 @@ function renderLoop(now: number): void {
   // Decay recoil
   if (recoilPitch > 0) {
     recoilPitch = Math.max(0, recoilPitch - RECOIL_DECAY_RATE * frameDt);
-  }
   }
 
   // --- Viewmodel ---

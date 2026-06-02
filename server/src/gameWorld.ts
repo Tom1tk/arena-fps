@@ -220,7 +220,7 @@ export class GameWorld {
         yaw: p.sim.yaw, pitch: p.sim.pitch,
         hp: p.hp, ammo: p.ammo, alive: p.alive,
         crouch: p.sim.crouching, flags: p.reloading ? 1 : 0,
-        kills: p.kills,
+        kills: p.kills, deaths: p.deaths,
       });
     }
     for (const b of this.bots) {
@@ -229,7 +229,7 @@ export class GameWorld {
         pos: { ...b.sim.pos }, vel: { ...b.sim.vel },
         yaw: b.sim.yaw, pitch: b.sim.pitch,
         hp: b.hp, ammo: 99, alive: b.alive,
-        crouch: false, flags: 0, kills: b.kills,
+        crouch: false, flags: 0, kills: b.kills, deaths: b.deaths,
       });
     }
 

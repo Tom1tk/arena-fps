@@ -28,6 +28,7 @@ export interface EntityState {
   ammo: number;
   alive: boolean;
   kills: number;
+  deaths: number;
   isMe: boolean;
   reloading: boolean;
 }
@@ -74,6 +75,7 @@ export class NetGame {
           ammo: ps.ammo,
           alive: ps.alive,
           kills: ps.kills,
+          deaths: ps.deaths ?? 0,
           isMe: false,
           reloading: !!(ps.flags & 1),
         };
