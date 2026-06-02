@@ -9,6 +9,7 @@ import {
 import { MAX_PLAYERS } from '../../shared/constants';
 import { playerStep, type PlayerSim } from '../../shared/simulation/step';
 import { clamp } from '../../shared/math';
+import { ButtonFlags } from '../../shared/types';
 import { createArena } from './arena';
 import { FPSCounter } from './fpsCounter';
 import { SettingsStore } from './settingsStore';
@@ -17,6 +18,8 @@ import { createDummyTargets, type DummyTarget, raycastHitscan, BOT_DAMAGE } from
 import { ViewModel } from './viewmodel';
 import { playShoot, playReload, playKill } from './audio';
 import { selectSpawnPoint } from '../../shared/spawn-selection';
+import { NetGame } from './netGame';
+import { RemotePlayerManager } from './remotePlayers';
 import type { InputFrame, SpawnPoint } from '../../shared/types';
 
 // --- Arena bounds for collision ---
@@ -266,7 +269,7 @@ netClient.onChange(() => {
     if (!started) {
       lobbyPanel.classList.remove('visible');
       titleOverlay.style.display = 'none';
-      initGame();
+      initGame(true);
     }
   }
 
@@ -438,6 +441,13 @@ let paused = false;
 let tabOpen = false;
 let kills = 0;
 let playerDeaths = 0;
+
+// --- Networked game mode ---
+let networkedMode = false; // true when playing via NetClient
+let netGame: NetGame | null = null;
+let remotePlayers: RemotePlayerManager | null = null;
+// Input sequence counter for server
+let inputSeq = 0;
 
 // --- M3: Match state ---
 type MatchPhase = 'playing' | 'post_match';
@@ -833,9 +843,10 @@ function updateOverlays(dt: number): void {
   }
 }
 
-function initGame(): void {
+function initGame(networked: boolean = false): void {
   started = true;
   paused = false;
+  networkedMode = networked;
 
   // Init input source
   const theCanvas = document.querySelector('canvas')!;
@@ -858,12 +869,10 @@ function initGame(): void {
   postMatchTimer = 0;
   recentSpawns = [];
   killFeed = [];
-
-  // Init dummy targets
-  dummyTargets = createDummyTargets(5, ARENA_HALF);
-  for (const t of dummyTargets) {
-    scene.add(t.group);
-  }
+  inputSeq = 0;
+  fireCooldown = 0;
+  simAccum = 0;
+  recoilPitch = 0;
 
   // Collect obstacle meshes for raycast occlusion
   obstacleMeshes = [];
@@ -877,8 +886,34 @@ function initGame(): void {
   if (viewmodel) viewmodel.dispose();
   viewmodel = new ViewModel(scene, camera);
 
-  // Spawn player at smart position
-  spawnPlayer(performance.now() / 1000);
+  if (networkedMode) {
+    // Networked mode: server authoritative
+    netGame = new NetGame(netClient);
+    remotePlayers = new RemotePlayerManager(scene);
+    // Remove local dummy targets
+    for (const t of dummyTargets) {
+      scene.remove(t.group);
+      t.dispose();
+    }
+    dummyTargets = [];
+    // Camera starts at origin, server will set position
+    camera.position.set(0, 1.6, 10);
+    console.log('[Game] Started in NETWORKED mode');
+  } else {
+    // Practice mode: local simulation
+    if (netGame) netGame = null;
+    if (remotePlayers) {
+      remotePlayers.dispose();
+      remotePlayers = null;
+    }
+    dummyTargets = createDummyTargets(5, ARENA_HALF);
+    for (const t of dummyTargets) {
+      scene.add(t.group);
+    }
+    // Spawn player at smart position
+    spawnPlayer(performance.now() / 1000);
+    console.log('[Game] Started in PRACTICE mode');
+  }
 
   // Lock pointer
   setTimeout(() => (document.querySelector('canvas') as HTMLCanvasElement)?.requestPointerLock(), 100);
@@ -907,7 +942,65 @@ function renderLoop(now: number): void {
     return;
   }
 
-    simAccum += frameDt;
+  // --- NETWORKED MODE: send input + render from server snapshots ---
+  if (networkedMode && netGame && inputSource) {
+    // Send input to server
+    const input = inputSource.poll();
+    const yaw = inputSource.getYaw();
+    const pitch = inputSource.getPitch();
+
+    // Build button bits from input
+    const buttons = input.buttons;
+
+    inputSeq++;
+    netGame.sendInput(inputSeq, {
+      moveX: input.moveX,
+      moveZ: input.moveZ,
+      yaw,
+      pitch,
+      buttons,
+    });
+
+    // Update from server snapshot
+    netGame.update();
+    const me = netGame.getMe();
+    if (me && me.alive) {
+      // Camera position from server
+      camera.position.set(me.pos.x, me.pos.y, me.pos.z);
+      camera.rotation.order = 'YXZ';
+      camera.rotation.y = me.yaw;
+      camera.rotation.x = me.pitch;
+
+      // Update HUD from server state
+      hp = me.hp;
+      ammo = me.ammo;
+      isDead = !me.alive;
+    } else if (me && !me.alive) {
+      // Dead — show death overlay
+      isDead = true;
+      deathOverlay.style.display = 'flex';
+    }
+
+    // Update remote players
+    if (remotePlayers) {
+      remotePlayers.update(netGame.getAll(), camera);
+    }
+
+    // Process server events for kill feed
+    for (const evt of netGame.pendingEvents) {
+      if (evt.type === 'Kill') {
+        const killer = netGame.get((evt as any).killer);
+        const victim = netGame.get((evt as any).victim);
+        if (killer && victim) {
+          addKillFeedEntry(killer.name, victim.name, false);
+        }
+      }
+      if (evt.type === 'Hit') {
+        showHitMarker();
+      }
+    }
+  } else {
+  simAccum += frameDt;
   while (simAccum >= TICK_DT) {
     // Don't simulate movement/shooting when dead — only countdown
     if (!isDead) {
@@ -1000,81 +1093,65 @@ function renderLoop(now: number): void {
         }
       }
 
+      // Jump
+      if ((input.buttons & ButtonFlags.JUMP) !== 0 && player.grounded) {
+        // Jump event
+      }
+
+      // --- Step simulation ---
       playerStep(player, input, TICK_DT, WORLD_BOUNDS, OBSTACLES);
+
+      // --- Land detection ---
+      if (!player.grounded) {
+        // In air
+      }
     }
-    } // end if (!isDead)
+  } else {
+    // Dead — countdown respawn
+    playerRespawnTimer -= TICK_DT;
+  }
     simAccum -= TICK_DT;
   }
 
-  // --- Decay recoil toward zero each frame (visual only) ---
-  recoilPitch *= Math.max(0, 1 - RECOIL_DECAY_RATE * frameDt);
+  // --- Render interpolation ---
+  const lerpT = clamp(simAccum / TICK_DT, 0, 1);
+  lerpPos(renderPos, prevPos, player.pos, lerpT);
 
-  // --- Interpolate render position ---
-  const alpha = simAccum / TICK_DT; // 0..1 fraction within current tick
-  lerpPos(renderPos, prevPos, player.pos, alpha);
-
-  // --- Update camera from interpolated position + per-frame aim ---
-  camera.position.set(renderPos.x, renderPos.y, renderPos.z);
-  camera.rotation.order = 'YXZ';
-  // Source yaw/pitch directly from input source (per-frame, no tick-coupling)
+  // --- Camera ---
   if (inputSource) {
-    camera.rotation.y = inputSource.getYaw();
-    // Clamp recoil so total pitch stays within ±89°
-    const basePitch = inputSource.getPitch();
-    const maxRecoil = Math.PI / 2 - 0.01 - basePitch;
-    const clampedRecoil = recoilPitch > 0 ? Math.min(recoilPitch, maxRecoil) : recoilPitch;
-    camera.rotation.x = basePitch + clampedRecoil;
+    // Source yaw/pitch from inputSource per-frame
+    const yaw = inputSource.getYaw();
+    const pitch = inputSource.getPitch();
+    player.yaw = yaw;
+    player.pitch = pitch;
   }
 
-  // --- M2: Update viewmodel ---
-  // Use cached movement state from the sim input (avoid double-polling which resets edge detection)
-  const cachedInput = lastSimInput;
-  const isMoving = cachedInput ? (cachedInput.moveX !== 0 || cachedInput.moveZ !== 0) : false;
-  viewmodel?.update(frameDt, isMoving);
+  camera.position.set(renderPos.x, renderPos.y + PLAYER_RADIUS * 0.5, renderPos.z);
+  camera.rotation.order = 'YXZ';
+  camera.rotation.y = player.yaw;
+  camera.rotation.x = player.pitch - recoilPitch;
 
-  // --- M2: Update dummy targets (respawn timers + bot damage) ---
-  // Bot damage to player (M3) — only when alive and playing
-  if (matchPhase === 'playing' && !isDead) {
-    let totalBotDamage = 0;
-    for (const t of dummyTargets) {
-      const dmg = t.update(frameDt, player.pos);
-      if (dmg > 0) {
-        totalBotDamage += dmg;
-      }
-    }
-    // Apply total bot damage, cap at one death per frame
-    if (totalBotDamage > 0) {
-      hp -= totalBotDamage;
-      showDamageIndicator();
-      if (hp <= 0) {
-        hp = 0;
-        // Find nearest alive bot as the "killer"
-        let killer: string = 'Bot';
-        let nearestDist = Infinity;
-        for (const t of dummyTargets) {
-          if (!t.alive) continue;
-          const dx = player.pos.x - t.group.position.x;
-          const dz = player.pos.z - t.group.position.z;
-          const dist = dx * dx + dz * dz;
-          if (dist < nearestDist) {
-            nearestDist = dist;
-            killer = t.name;
-          }
-        }
-        onPlayerDeath(killer, false);
-      }
-    }
+  // Decay recoil
+  if (recoilPitch > 0) {
+    recoilPitch = Math.max(0, recoilPitch - RECOIL_DECAY_RATE * frameDt);
+  }
   }
 
-  // --- Player respawn countdown (runs even when dead, OUTSIDE the !isDead block) ---
-  if (isDead && matchPhase === 'playing') {
-    playerRespawnTimer -= frameDt;
-    if (playerRespawnTimer <= 0) {
-      respawnPlayer(performance.now() / 1000);
-    }
+  // --- Viewmodel ---
+  if (viewmodel && inputSource) {
+    viewmodel.update(frameDt, inputSource.getFirePressed());
   }
 
-  // --- M3: Post-match countdown ---
+  // --- Update overlays ---
+  updateOverlays(frameDt);
+
+  // --- HUD update (throttled) ---
+  updateHUD();
+
+  // --- Kill feed ---
+  updateKillFeedUI();
+
+  // --- Post-match timer ---
   if (matchPhase === 'post_match') {
     postMatchTimer -= frameDt;
     if (postMatchTimer <= 0) {
@@ -1082,46 +1159,8 @@ function renderLoop(now: number): void {
     }
   }
 
-  // --- M3: Kill feed update ---
-  killFeedTimer = Math.max(0, killFeedTimer - frameDt);
-  updateKillFeedUI();
-
-  // --- M3: Update scoreboard ---
-  const sbText = `K: ${kills} | D: ${playerDeaths} | Goal: ${KILL_GOAL}`;
-  if (scoreboardEl.textContent !== sbText) {
-    scoreboardEl.textContent = sbText;
-  }
-
-  // --- M3: Update tab scoreboard with bot entries ---
-  if (tabOpen) {
-    updateTabScoreboardM3();
-  }
-
-  // --- M3: Update overlays (death, post-match, damage flash) ---
-  updateOverlays(frameDt);
-
-  // --- Render (timed) ---
-  const renderStart = performance.now();
+  // --- Render ---
   renderer.render(scene, camera);
-  const renderMs = performance.now() - renderStart;
-
-  // --- Debug info (throttled via FPSCounter) ---
-  fpsCounter.setDebugInfo(`${isWebGPU ? 'WebGPU' : 'WebGL2'} | render: ${renderMs.toFixed(1)}ms | tick: 30Hz`);
-
-  // --- Update HUD (throttled: only when values actually change) ---
-  const hpPct = Math.round((hp / PLAYER_MAX_HP) * 100);
-  if (hpFill.dataset.lastHp !== String(hpPct)) {
-    hpFill.style.width = `${hpPct}%`;
-    hpFill.style.background = hp > 60 ? '#0c0' : hp > 30 ? '#cc0' : '#c00';
-    hpFill.dataset.lastHp = String(hpPct);
-  }
-  const ammoText = reloading ? 'Reloading...' : `${ammo} / ∞`;
-  if (ammoDisplay.textContent !== ammoText) {
-    ammoDisplay.textContent = ammoText;
-  }
-  if (scoreboardEl.textContent !== `K: ${kills}`) {
-    scoreboardEl.textContent = `K: ${kills}`;
-  }
 }
 
 // --- Boot ---

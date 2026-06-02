@@ -1,4 +1,5 @@
 import { WebSocket } from 'ws';
+import { GameWorld } from './gameWorld.js';
 
 // --- Re-exported from constants ---
 export { MAX_PLAYERS, KILL_GOAL, POST_MATCH_DURATION_S, START_COUNTDOWN_S, LOBBY_CODE_LENGTH, NAME_MIN, NAME_MAX, HEARTBEAT_INTERVAL_S, HEARTBEAT_MISS_LIMIT } from '../../shared/constants.js';
@@ -18,6 +19,7 @@ export interface Room {
   players: Map<WebSocket, PlayerInfo>;
   phase: 'lobby' | 'readying' | 'countdown' | 'playing' | 'post_match';
   startedAt: number;
+  gameWorld: GameWorld | null;
 }
 
 export interface LobbyMessage {
@@ -48,6 +50,11 @@ export function validateLobbyCode(code: string): boolean {
 export class LobbyManager {
   private rooms = new Map<string, Room>();
 
+  /** Iterate over all rooms. */
+  get roomEntries(): IterableIterator<[string, Room]> {
+    return this.rooms.entries();
+  }
+
   /**
    * Create a new room. Returns the lobby code.
    */
@@ -59,6 +66,7 @@ export class LobbyManager {
       players: new Map(),
       phase: 'lobby',
       startedAt: 0,
+      gameWorld: null,
     };
     room.players.set(ws, { name, ready: false, isHost: true });
     this.rooms.set(code, room);
@@ -234,6 +242,31 @@ export class LobbyManager {
       playerCount: room.players.size,
       maxPlayers: MAX_PLAYERS,
     });
+  }
+
+  /**
+   * Start the match for a room. Creates the GameWorld and adds all players.
+   */
+  startMatch(code: string): boolean {
+    const room = this.rooms.get(code);
+    if (!room || room.phase === 'playing') return false;
+
+    room.phase = 'countdown';
+    room.gameWorld = new GameWorld();
+    room.startedAt = Date.now();
+
+    // Add all players to game world
+    for (const [ws, info] of room.players) {
+      room.gameWorld!.addPlayer(ws, info.name);
+    }
+
+    this.broadcast(code, {
+      type: 'match_start',
+      phase: 'countdown',
+      countdown: 3,
+    });
+
+    return true;
   }
 }
 

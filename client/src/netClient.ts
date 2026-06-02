@@ -5,6 +5,7 @@ import {
   NAME_MAX,
   LOBBY_CODE_LENGTH,
 } from '../../shared/constants';
+import type { Snapshot, PlayerState } from '../../shared/types';
 
 // --- Types ---
 
@@ -22,6 +23,9 @@ export interface LobbyState {
   roster: RosterEntry[];
   countdown: number;
   error: string | null;
+  // Game state (populated during 'playing' phase)
+  latestSnapshot: Snapshot | null;
+  myPlayerId: number | null;
 }
 
 export type LobbyMessage = Record<string, any>;
@@ -38,6 +42,8 @@ export class NetClient {
     roster: [],
     countdown: 0,
     error: null,
+    latestSnapshot: null,
+    myPlayerId: null,
   };
   private listeners: Set<() => void> = new Set();
   private hbTimer: ReturnType<typeof setInterval> | null = null;
@@ -52,6 +58,8 @@ export class NetClient {
   get countdown(): number { return this.state.countdown; }
   get error(): string | null { return this.state.error; }
   get connected(): boolean { return this.ws !== null && this.ws.readyState === WebSocket.OPEN; }
+  get latestSnapshot(): Snapshot | null { return this.state.latestSnapshot; }
+  get myPlayerId(): number | null { return this.state.myPlayerId; }
 
   /** Subscribe to state changes. */
   onChange(fn: () => void): () => void {
@@ -117,6 +125,16 @@ export class NetClient {
   /** Host starts the match. */
   start(): void {
     this.send({ type: 'start' });
+  }
+
+  /** Send game input to server. */
+  sendInput(seq: number, moveX: number, moveZ: number, yaw: number, pitch: number, buttons: number): void {
+    this.send({
+      type: 'input',
+      seq,
+      viewTick: 0,
+      moveX, moveZ, yaw, pitch, buttons,
+    });
   }
 
   /** Disconnect from server. */
@@ -227,6 +245,17 @@ export class NetClient {
 
       case 'error':
         this.state.error = msg.message;
+        break;
+
+      case 'snapshot':
+        // Server game state update
+        this.state.latestSnapshot = {
+          serverTick: msg.tick,
+          ackInputSeq: msg.ackInputSeq || 0,
+          players: msg.players || [],
+          events: msg.events || [],
+        };
+        this.notify();
         break;
 
       default:

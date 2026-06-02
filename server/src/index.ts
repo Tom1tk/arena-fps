@@ -16,7 +16,8 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { LobbyManager } from './lobby.js';
-import { MAX_PLAYERS, NAME_MIN, NAME_MAX, HEARTBEAT_INTERVAL_S, HEARTBEAT_MISS_LIMIT } from '../../shared/constants.js';
+import { GameWorld } from './gameWorld.js';
+import { MAX_PLAYERS, NAME_MIN, NAME_MAX, HEARTBEAT_INTERVAL_S, HEARTBEAT_MISS_LIMIT, SERVER_TICK_HZ, TICK_DT } from '../../shared/constants.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // Client dist is at <project_root>/dist/client — server JS is at <project_root>/dist/server/server/src/
@@ -130,9 +131,17 @@ wss.on('connection', (ws: WebSocket) => {
     console.log(`[WS] Client disconnected (code: ${code})`);
     const result = lobbyManager.leaveRoom(ws);
     if (result.room) {
+      // Handle game world disconnect
+      if (result.room.gameWorld) {
+        for (const player of result.room.gameWorld.players.values()) {
+          if (player.ws === ws) {
+            player.connected = false;
+            break;
+          }
+        }
+      }
       // Notify remaining players
       lobbyManager.broadcastRoster(result.room.code);
-      // If host left and room disbanded, no need to notify
       if (result.room.players.size > 0) {
         lobbyManager.broadcastRoster(result.room.code);
       }
@@ -242,19 +251,37 @@ function handleMessage(ws: WebSocket, msg: any): void {
         ws.send(JSON.stringify({ type: 'error', message: 'Match already in progress' }));
         return;
       }
-      // Start the match
-      info.room.phase = 'countdown';
-      lobbyManager.broadcast(info.room.code, {
-        type: 'match_start',
-        phase: 'countdown',
-        countdown: 3,
-      });
-      console.log(`[Lobby] Match started in room ${info.room.code}`);
+      // Start the match via LobbyManager
+      lobbyManager.startMatch(info.room.code);
+      console.log(`[Game] Match started in room ${info.room.code}`);
+      break;
+    }
+
+    case 'input': {
+      // Client game input
+      const pInfo = lobbyManager.getPlayer(ws);
+      if (!pInfo || !pInfo.room.gameWorld) {
+        ws.send(JSON.stringify({ type: 'error', message: 'Not in a match' }));
+        return;
+      }
+      const world = pInfo.room.gameWorld;
+      const player = [...world.players.values()].find(p => p.ws === ws);
+      if (player) {
+        const input = {
+          seq: msg.seq as number,
+          viewTick: msg.viewTick as number,
+          moveX: msg.moveX as number,
+          moveZ: msg.moveZ as number,
+          yaw: msg.yaw as number,
+          pitch: msg.pitch as number,
+          buttons: msg.buttons as number,
+        };
+        world.processInput(player.id, input);
+      }
       break;
     }
 
     case 'heartbeat': {
-      // Client heartbeat (app-level, supplements WebSocket ping/pong)
       (ws as any).__hbTimer = 0;
       break;
     }
@@ -263,6 +290,45 @@ function handleMessage(ws: WebSocket, msg: any): void {
       console.log(`[WS] Unknown message type: ${msg.type}`);
   }
 }
+
+// --- Game tick loop ---
+const gameTickInterval = setInterval(() => {
+  for (const [, room] of lobbyManager.roomEntries) {
+    if (room.phase === 'countdown' || room.phase === 'playing') {
+      if (!room.gameWorld) continue;
+
+      // Transition from countdown to playing
+      if (room.phase === 'countdown') {
+        const elapsed = (Date.now() - room.startedAt) / 1000;
+        if (elapsed >= 3) {
+          room.phase = 'playing';
+          lobbyManager.broadcast(room.code, {
+            type: 'match_start',
+            phase: 'playing',
+          });
+          console.log(`[Game] Room ${room.code} now playing`);
+        }
+      }
+
+      // Run game tick
+      const snapshot = room.gameWorld.tick();
+
+      // Broadcast snapshot to all players in room
+      const data = JSON.stringify({
+        type: 'snapshot',
+        tick: snapshot.serverTick,
+        players: snapshot.players,
+        events: snapshot.events,
+      });
+      for (const [playerWs] of room.players) {
+        if (playerWs.readyState === WebSocket.OPEN) {
+          playerWs.send(data);
+        }
+      }
+    }
+  }
+}, 1000 / SERVER_TICK_HZ);
+gameTickInterval.unref();
 
 function sanitizeName(name: string): string {
   return (name || '').trim().replace(/[<>]/g, '').slice(0, NAME_MAX);

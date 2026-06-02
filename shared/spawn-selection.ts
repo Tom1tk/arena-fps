@@ -15,7 +15,7 @@ import {
   W_VISIBLE,
   W_RECENT,
   RECENT_SPAWN_WINDOW,
-} from './constants';
+} from './constants.js';
 import type { SpawnPoint } from './types';
 
 /**

@@ -7,9 +7,9 @@ import {
   GROUND_ACCEL, GROUND_FRICTION, AIR_ACCEL,
   PLAYER_EYE_HEIGHT, PLAYER_CROUCH_HEIGHT, PLAYER_RADIUS,
   MAX_SLOPE_WALKABLE_DEG,
-} from '../constants';
+} from '../constants.js';
 import type { InputFrame } from '../types';
-import { clamp } from '../math';
+import { clamp } from '../math.js';
 
 const MAX_SLOPE_DOT = Math.cos((MAX_SLOPE_WALKABLE_DEG * Math.PI) / 180);
 

@@ -75,3 +75,36 @@ export const INPUT_BUFFER_MAX = 128;
 export const SMOOTH_TAU_MS = 100;
 export const HEARTBEAT_INTERVAL_S = 25;
 export const HEARTBEAT_MISS_LIMIT = 3;
+
+// --- Arena layout (shared between client & server) ---
+export const ARENA_HALF = 20;
+
+import type { AABB } from './types';
+export const OBSTACLES: AABB[] = [
+  // Central cover: { x: 0, z: 0, w: 3, h: 2, d: 3 }
+  { min: { x: -1.5, y: 0, z: -1.5 }, max: { x: 1.5, y: 2, z: 1.5 } },
+  // { x: 6, z: 6, w: 2, h: 2.5, d: 2 }
+  { min: { x: 5, y: 0, z: 5 }, max: { x: 7, y: 2.5, z: 7 } },
+  // { x: -6, z: 6, w: 2, h: 2.5, d: 2 }
+  { min: { x: -7, y: 0, z: 5 }, max: { x: -5, y: 2.5, z: 7 } },
+  // { x: 6, z: -6, w: 2, h: 2.5, d: 2 }
+  { min: { x: 5, y: 0, z: -7 }, max: { x: 7, y: 2.5, z: -5 } },
+  // { x: -6, z: -6, w: 2, h: 2.5, d: 2 }
+  { min: { x: -7, y: 0, z: -7 }, max: { x: -5, y: 2.5, z: -5 } },
+  // Corner cover: { x: 12, z: 12, w: 3, h: 1.5, d: 1.5 }
+  { min: { x: 10.5, y: 0, z: 11.25 }, max: { x: 13.5, y: 1.5, z: 12.75 } },
+  // { x: -12, z: 12, w: 3, h: 1.5, d: 1.5 }
+  { min: { x: -13.5, y: 0, z: 11.25 }, max: { x: -10.5, y: 1.5, z: 12.75 } },
+  // { x: 12, z: -12, w: 3, h: 1.5, d: 1.5 }
+  { min: { x: 10.5, y: 0, z: -12.75 }, max: { x: 13.5, y: 1.5, z: -11.25 } },
+  // { x: -12, z: -12, w: 3, h: 1.5, d: 1.5 }
+  { min: { x: -13.5, y: 0, z: -12.75 }, max: { x: -10.5, y: 1.5, z: -11.25 } },
+  // Mid-edge: { x: 10, z: 0, w: 1.5, h: 2, d: 4 }
+  { min: { x: 9.25, y: 0, z: -2 }, max: { x: 10.75, y: 2, z: 2 } },
+  // { x: -10, z: 0, w: 1.5, h: 2, d: 4 }
+  { min: { x: -10.75, y: 0, z: -2 }, max: { x: -9.25, y: 2, z: 2 } },
+  // { x: 0, z: 10, w: 4, h: 2, d: 1.5 }
+  { min: { x: -2, y: 0, z: 9.25 }, max: { x: 2, y: 2, z: 10.75 } },
+  // { x: 0, z: -10, w: 4, h: 2, d: 1.5 }
+  { min: { x: -2, y: 0, z: -10.75 }, max: { x: 2, y: 2, z: -9.25 } },
+];
