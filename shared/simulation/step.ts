@@ -101,6 +101,39 @@ function resolveCapsuleAABB(
 }
 
 /**
+ * Resolve capsule-vs-capsule collision (player-vs-player).
+ * Other player is treated as an immovable static collider (§4.5).
+ * Only the moving player is displaced; the other is untouched.
+ */
+function resolveCapsuleVsCapsule(
+  p: PlayerSim,
+  other: { x: number; y: number; z: number; height: number },
+  radius: number,
+): void {
+  // Horizontal distance between capsule centers
+  const dx = p.pos.x - other.x;
+  const dz = p.pos.z - other.z;
+  const distXZ = Math.sqrt(dx * dx + dz * dz);
+  const minDist = radius * 2; // two radii
+
+  // Check vertical overlap
+  const feetY = p.pos.y - p.eyeHeight;
+  const topY = feetY + p.eyeHeight;
+  const yOverlap = topY > other.y && feetY < other.y + other.height;
+  if (!yOverlap) return;
+
+  // No collision if far enough
+  if (distXZ >= minDist || distXZ < 0.0001) return;
+
+  // Push the moving player out
+  const penetration = minDist - distXZ;
+  const pushX = (dx / distXZ) * penetration;
+  const pushZ = (dz / distXZ) * penetration;
+  p.pos.x += pushX;
+  p.pos.z += pushZ;
+}
+
+/**
  * Single fixed-timestep simulation step for one player.
  * Mutates the player state in place for performance.
  * Returns whether the player is grounded after this step.
@@ -110,8 +143,10 @@ export function playerStep(
   input: InputFrame,
   dt: number,
   worldBounds: { minY: number; maxY: number; minX: number; maxX: number; minZ: number; maxZ: number },
-  obstacles: AABB[] = []
-): void {
+  obstacles: AABB[] = [],
+  /** Other players as static colliders (§4.5 — solid, no push) */
+  otherPlayers?: Array<{ x: number; y: number; z: number; height: number }>,
+): boolean {
   // --- Update yaw/pitch from input ---
   p.yaw = input.yaw;
   p.pitch = input.pitch;
@@ -122,17 +157,10 @@ export function playerStep(
   p.eyeHeight = p.crouching ? PLAYER_CROUCH_HEIGHT : PLAYER_EYE_HEIGHT;
 
   // --- Compute move direction in world space from yaw ---
-  // Negate yaw here: three.js camera.rotation.y uses opposite sign to our
-  // yaw accumulator (mouse: yaw -= movementX), so we negate to match the
-  // visual facing direction the player sees.
   const cosYaw = Math.cos(-p.yaw);
   const sinYaw = Math.sin(-p.yaw);
-
-  // Forward = -Z in three.js, Right = +X
   _dir.x = input.moveX * cosYaw - input.moveZ * sinYaw;
   _dir.z = input.moveX * sinYaw + input.moveZ * cosYaw;
-
-  // Normalize diagonal input
   const len = Math.sqrt(_dir.x * _dir.x + _dir.z * _dir.z);
   if (len > 0.001) {
     _dir.x /= len;
@@ -143,11 +171,8 @@ export function playerStep(
   const speed = p.crouching ? CROUCH_SPEED : MOVE_SPEED;
   const accel = p.grounded ? GROUND_ACCEL : AIR_ACCEL;
   const friction = p.grounded ? GROUND_FRICTION : 0;
-
-  // Apply acceleration toward input direction
   const targetX = _dir.x * speed;
   const targetZ = _dir.z * speed;
-
   const accelDt = accel * dt;
   if (targetX > p.vel.x + accelDt) {
     p.vel.x = targetX;
@@ -156,7 +181,6 @@ export function playerStep(
   } else {
     p.vel.x += (targetX - p.vel.x) * Math.min(1, accelDt / Math.abs(targetX - p.vel.x + 0.001));
   }
-
   if (targetZ > p.vel.z + accelDt) {
     p.vel.z = targetZ;
   } else if (targetZ < p.vel.z - accelDt) {
@@ -168,16 +192,10 @@ export function playerStep(
   // --- Friction (ground only) ---
   if (p.grounded && friction > 0) {
     const frictionImpulse = friction * dt;
-    if (p.vel.x > 0) {
-      p.vel.x = Math.max(0, p.vel.x - frictionImpulse);
-    } else if (p.vel.x < 0) {
-      p.vel.x = Math.min(0, p.vel.x + frictionImpulse);
-    }
-    if (p.vel.z > 0) {
-      p.vel.z = Math.max(0, p.vel.z - frictionImpulse);
-    } else if (p.vel.z < 0) {
-      p.vel.z = Math.min(0, p.vel.z + frictionImpulse);
-    }
+    if (p.vel.x > 0) p.vel.x = Math.max(0, p.vel.x - frictionImpulse);
+    else if (p.vel.x < 0) p.vel.x = Math.min(0, p.vel.x + frictionImpulse);
+    if (p.vel.z > 0) p.vel.z = Math.max(0, p.vel.z - frictionImpulse);
+    else if (p.vel.z < 0) p.vel.z = Math.min(0, p.vel.z + frictionImpulse);
   }
 
   // --- Clamp horizontal speed ---
@@ -203,7 +221,7 @@ export function playerStep(
   p.pos.y += p.vel.y * dt;
   p.pos.z += p.vel.z * dt;
 
-  // --- Floor collision (simple: ground at y=0 for now) ---
+  // --- Floor collision ---
   const feetY = p.pos.y - p.eyeHeight;
   if (feetY < 0) {
     p.pos.y = p.eyeHeight;
@@ -221,4 +239,14 @@ export function playerStep(
       resolveCapsuleAABB(p, obstacles[i], PLAYER_RADIUS, dt);
     }
   }
+
+  // --- Player-vs-player collision (§4.5 — solid, no push) ---
+  if (otherPlayers) {
+    for (const other of otherPlayers) {
+      resolveCapsuleVsCapsule(p, other, PLAYER_RADIUS);
+    }
+  }
+
+  // Return true if player is still in bounds (false = OOB death)
+  return true;
 }

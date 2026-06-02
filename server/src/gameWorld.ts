@@ -1,10 +1,14 @@
 /**
- * Arena FPS — Server-side game world
+ * Arena FPS — Server-side authoritative game world
+ *
+ * Implements §4.3 (server tick loop), §4.5 (solid-no-push collision),
+ * §4.6 (lag-compensated hitscan with ring buffer), §4.7 (lifecycle).
  */
 import {
   TICK_DT, PLAYER_MAX_HP, MAG_SIZE, DAMAGE_BODY, DAMAGE_HEAD,
-  RESPAWN_DELAY_S, PLAYER_EYE_HEIGHT, ARENA_HALF,
-  SPAWN_POSITIONS,
+  RESPAWN_DELAY_S, PLAYER_EYE_HEIGHT, ARENA_HALF, HITSCAN_MAX_RANGE,
+  SPAWN_POSITIONS, LAGCOMP_HISTORY_TICKS, INPUT_BUFFER_MAX,
+  MAX_PLAYERS, KILL_GOAL, RELOAD_TIME_S, FIRE_RATE_RPM,
 } from '../../shared/constants.js';
 import { OBSTACLES as SHARED_OBSTACLES } from '../../shared/constants.js';
 import { playerStep, type PlayerSim } from '../../shared/simulation/step.js';
@@ -33,6 +37,15 @@ const WORLD_BOUNDS: SimAABB = {
   minZ: -ARENA_HALF, maxZ: ARENA_HALF,
 };
 
+// Lag-comp history: stores player state per tick for rewinding
+interface LagCompEntry {
+  tick: number;
+  eyeX: number; eyeY: number; eyeZ: number;
+  yaw: number; pitch: number;
+  alive: boolean;
+  crouching: boolean;
+}
+
 let nextPlayerId = 1;
 let nextBotId = 100;
 
@@ -52,9 +65,15 @@ export interface ServerPlayer {
   reloadTimer: number;
   fireCooldown: number;
   respawnTimer: number;
+  // Input handling (§4.3 — drain inputs)
   inputBuffer: Map<number, InputFrame>;
   lastInputSeq: number;
-  currentInput: InputFrame | null;
+  lastIntent: InputFrame | null;       // repeated if no new input
+  intentRepeatTicks: number;           // clamp repeat to avoid permanent freeze
+  // Lag-comp ring buffer (§4.6)
+  lagCompHistory: LagCompEntry[];
+  // Per-client ack tracking (§4.3)
+  ackInputSeq: number;
   connected: boolean;
 }
 
@@ -81,6 +100,7 @@ export class GameWorld {
   bots: ServerBot[] = [];
   serverTick = 0;
   events: SnapshotEvent[] = [];
+  matchEnded = false;
   private recentSpawns: Array<{ pos: { x: number; y: number; z: number }; time: number }> = [];
 
   constructor(public botCount: number = 5) {
@@ -123,7 +143,11 @@ export class GameWorld {
       hp: PLAYER_MAX_HP, ammo: MAG_SIZE,
       kills: 0, deaths: 0, alive: true,
       reloading: false, reloadTimer: 0, fireCooldown: 0, respawnTimer: 0,
-      inputBuffer: new Map(), lastInputSeq: 0, currentInput: null, connected: true,
+      inputBuffer: new Map(), lastInputSeq: 0,
+      lastIntent: null, intentRepeatTicks: 0,
+      lagCompHistory: [],
+      ackInputSeq: 0,
+      connected: true,
     };
     this.players.set(id, p);
     this.recentSpawns.push({ pos: { ...p.sim.pos }, time: Date.now() / 1000 });
@@ -135,33 +159,98 @@ export class GameWorld {
     this.players.delete(id);
   }
 
+  /**
+   * Accept input from a client. Stores in per-player buffer for
+   * §4.3 drain processing. Handles redundancy (same seq ignored).
+   */
   processInput(playerId: number, input: InputFrame): void {
     const p = this.players.get(playerId);
     if (!p) return;
-    // Always accept the latest input — client sends every frame.
-    // Store as current input to be consumed on next tick.
-    p.currentInput = input;
+    // Ignore already-acked inputs
+    if (input.seq <= p.ackInputSeq) return;
+    // Store in buffer
+    p.inputBuffer.set(input.seq, input);
+    // Cap buffer size
+    while (p.inputBuffer.size > INPUT_BUFFER_MAX) {
+      const oldestSeq = Math.min(...p.inputBuffer.keys());
+      p.inputBuffer.delete(oldestSeq);
+    }
+    // Update ack seq
+    if (input.seq > p.ackInputSeq) {
+      p.ackInputSeq = input.seq;
+    }
   }
 
+  /**
+   * Server tick loop — §4.3 order:
+   * 1. Drain inputs
+   * 2. Step movement
+   * 3. Process fire (lag-comp hitscan)
+   * 4. Apply outcomes
+   * 5. Record history (lag-comp ring buffer)
+   * 6. Respawns
+   * 7. Build & broadcast snapshot
+   */
   tick(): Snapshot {
     this.serverTick++;
     const dt = TICK_DT;
     this.events = [];
 
-    for (const p of this.players.values()) {
-        if (!p.connected) continue;
+    // === Phase 1: Drain inputs & Step movement ===
+    // Build other-players list for solid-no-push collision (§4.5)
+    const allPlayers = [...this.players.values()];
+    const otherPlayersList: Array<{ x: number; y: number; z: number; height: number }> =
+      allPlayers.map(p => ({
+        x: p.sim.pos.x, y: 0, z: p.sim.pos.z,
+        height: p.sim.eyeHeight,
+      }));
 
-        if (!p.alive) {
-          p.respawnTimer -= dt;
-          if (p.respawnTimer <= 0) this.doRespawnPlayer(p);
+    for (const p of this.players.values()) {
+      if (!p.connected) continue;
+
+      if (!p.alive) {
+        p.respawnTimer -= dt;
+        if (p.respawnTimer <= 0) this.doRespawnPlayer(p);
+        this.recordLagCompEntry(p);
+        continue;
+      }
+
+      // --- Drain: pick highest-seq input not yet processed ---
+      let input: InputFrame | null = null;
+      let drainedSeq = -1;
+      for (const [seq, buf] of p.inputBuffer) {
+        if (seq > p.lastInputSeq && seq > drainedSeq) {
+          input = buf;
+          drainedSeq = seq;
+        }
+      }
+
+      // If no new input, repeat last intent (clamped to ~10 ticks = 333ms)
+      if (!input) {
+        if (p.lastIntent && p.intentRepeatTicks < 10) {
+          input = p.lastIntent;
+          p.intentRepeatTicks++;
+        } else {
+          p.intentRepeatTicks = 0;
+          // No input and no intent — still apply gravity/physics
+          playerStep(p.sim, {
+            seq: this.serverTick, viewTick: 0,
+            moveX: 0, moveZ: 0,
+            yaw: p.sim.yaw, pitch: p.sim.pitch,
+            buttons: 0,
+          }, dt, WORLD_BOUNDS, OBSTACLES, otherPlayersList.filter(o => !(Math.abs(o.x - p.sim.pos.x) < 1 && Math.abs(o.z - p.sim.pos.z) < 1)));
+          this.recordLagCompEntry(p);
           continue;
         }
+      } else {
+        // Drain consumed input
+        p.inputBuffer.delete(drainedSeq);
+        p.lastInputSeq = drainedSeq;
+        p.lastIntent = input;
+        p.intentRepeatTicks = 0;
+      }
 
-        // Use latest input from client
-        const input = p.currentInput;
-        if (!input) continue;
-
-        // Reload
+      // --- Reload handling ---
       if (p.reloading) {
         p.reloadTimer -= dt;
         if (p.reloadTimer <= 0) {
@@ -169,39 +258,46 @@ export class GameWorld {
           p.ammo = MAG_SIZE;
           this.events.push({ type: 'ReloadEnd', id: p.id });
         }
-        playerStep(p.sim, input, dt, WORLD_BOUNDS, OBSTACLES);
+        playerStep(p.sim, input, dt, WORLD_BOUNDS, OBSTACLES, otherPlayersList);
+        this.recordLagCompEntry(p);
         continue;
       }
 
-      // Start reload
+      // --- Start reload ---
       if ((input.buttons & 8) && p.ammo < MAG_SIZE) {
         p.reloading = true;
-        p.reloadTimer = 1.6;
+        p.reloadTimer = RELOAD_TIME_S;
         this.events.push({ type: 'ReloadStart', id: p.id });
       }
 
-      // Fire
+      // --- Fire (lag-comp hitscan) ---
       p.fireCooldown -= dt;
+      const fireRateDt = 60 / FIRE_RATE_RPM;
       if ((input.buttons & 4) && !p.reloading && p.ammo > 0 && p.fireCooldown <= 0) {
         p.ammo--;
-        p.fireCooldown = 60 / 360;
+        p.fireCooldown = fireRateDt;
         const origin = { x: p.sim.pos.x, y: p.sim.pos.y, z: p.sim.pos.z };
         const dirX = -Math.sin(input.yaw) * Math.cos(input.pitch);
         const dirY = Math.sin(input.pitch);
         const dirZ = -Math.cos(input.yaw) * Math.cos(input.pitch);
         this.events.push({ type: 'Shot', id: p.id, origin, dir: { x: dirX, y: dirY, z: dirZ } });
-        this.doHitscan(origin, dirX, dirY, dirZ, p);
+        // Lag-comp hitscan with viewTick
+        this.doHitscan(origin, dirX, dirY, dirZ, p, input.viewTick);
       }
 
-      // Jump
+      // --- Jump event ---
       if ((input.buttons & 1) && p.sim.grounded) {
         this.events.push({ type: 'Jump', id: p.id });
       }
 
-      playerStep(p.sim, input, dt, WORLD_BOUNDS, OBSTACLES);
+      // --- Step movement with other players as colliders (§4.5) ---
+      playerStep(p.sim, input, dt, WORLD_BOUNDS, OBSTACLES, otherPlayersList);
+
+      // --- Record lag-comp history ---
+      this.recordLagCompEntry(p);
     }
 
-    // Bots
+    // === Phase 2: Bots ===
     for (const bot of this.bots) {
       if (!bot.alive) {
         bot.deathTimer -= dt;
@@ -211,7 +307,18 @@ export class GameWorld {
       this.doBotAI(bot, dt);
     }
 
-    // Build snapshot
+    // === Phase 3: Check KILL_GOAL (§4.3 step 4) ===
+    if (!this.matchEnded) {
+      for (const p of this.players.values()) {
+        if (p.kills >= KILL_GOAL) {
+          this.matchEnded = true;
+          this.events.push({ type: 'MatchEnd', id: p.id, kills: p.kills });
+          break;
+        }
+      }
+    }
+
+    // === Phase 4: Build & broadcast snapshot ===
     const states: PlayerState[] = [];
     for (const p of this.players.values()) {
       states.push({
@@ -235,24 +342,122 @@ export class GameWorld {
 
     return {
       serverTick: this.serverTick,
-      ackInputSeq: 0,
+      ackInputSeq: 0, // per-client acks tracked in ServerPlayer.ackInputSeq
       players: states,
       events: this.events,
     };
   }
 
-  private doHitscan(origin: { x: number; y: number; z: number },
-    dx: number, dy: number, dz: number, shooter: ServerPlayer): void {
-    const hitRadius = 0.5; // ~0.25^2 for body check
-    let closest = 200;
+  /**
+   * Record one entry in the lag-comp ring buffer.
+   * Keeps the last LAGCOMP_HISTORY_TICKS entries per player.
+   */
+  private recordLagCompEntry(p: ServerPlayer): void {
+    p.lagCompHistory.push({
+      tick: this.serverTick,
+      eyeX: p.sim.pos.x, eyeY: p.sim.pos.y, eyeZ: p.sim.pos.z,
+      yaw: p.sim.yaw, pitch: p.sim.pitch,
+      alive: p.alive,
+      crouching: p.sim.crouching,
+    });
+    // Trim old entries
+    const maxAge = this.serverTick - LAGCOMP_HISTORY_TICKS;
+    while (p.lagCompHistory.length > 1 && p.lagCompHistory[0].tick < maxAge) {
+      p.lagCompHistory.shift();
+    }
+  }
+
+  /**
+   * Reconstruct a player's position at a given tick from lag-comp history.
+   * Returns null if player has no history or is outside the window.
+   */
+  getPlayerStateAt(playerId: number, targetTick: number):
+    { x: number; y: number; z: number; yaw: number; pitch: number; alive: boolean } | null {
+    const p = this.players.get(playerId);
+    if (!p || p.lagCompHistory.length === 0) return null;
+
+    const hist = p.lagCompHistory;
+    // Find bracketing entries
+    let prev = hist[0];
+    let next = hist[hist.length - 1];
+
+    for (let i = 0; i < hist.length - 1; i++) {
+      if (hist[i].tick <= targetTick && hist[i + 1].tick >= targetTick) {
+        prev = hist[i];
+        next = hist[i + 1];
+        break;
+      }
+    }
+
+    // If targetTick is before our oldest entry, use oldest
+    if (targetTick < prev.tick) {
+      return {
+        x: prev.eyeX, y: prev.eyeY, z: prev.eyeZ,
+        yaw: prev.yaw, pitch: prev.pitch, alive: prev.alive,
+      };
+    }
+
+    // If after newest, use newest
+    if (targetTick > next.tick) {
+      return {
+        x: next.eyeX, y: next.eyeY, z: next.eyeZ,
+        yaw: next.yaw, pitch: next.pitch, alive: next.alive,
+      };
+    }
+
+    // Interpolate between prev and next
+    const range = next.tick - prev.tick;
+    const t = range > 0 ? (targetTick - prev.tick) / range : 0;
+    return {
+      x: prev.eyeX + (next.eyeX - prev.eyeX) * t,
+      y: prev.eyeY + (next.eyeY - prev.eyeY) * t,
+      z: prev.eyeZ + (next.eyeZ - prev.eyeZ) * t,
+      yaw: prev.yaw + (next.yaw - prev.yaw) * t,
+      pitch: prev.pitch + (next.pitch - prev.pitch) * t,
+      alive: prev.alive && next.alive,
+    };
+  }
+
+  /**
+   * Lag-compensated hitscan (§4.6).
+   *
+   * The shooter's viewTick tells us what tick the client was rendering at
+   * when they fired. We rewind all targets to that tick to give a fair
+   * hit check — "what the shooter saw is what they get."
+   */
+  private doHitscan(
+    origin: { x: number; y: number; z: number },
+    dx: number, dy: number, dz: number,
+    shooter: ServerPlayer,
+    viewTick: number,
+  ): void {
+    const hitRadius = PLAYER_EYE_HEIGHT; // Use player radius from shared
+    const maxRange = HITSCAN_MAX_RANGE;
+
+    // Validate viewTick — must be within lag-comp window
+    let targetTick = viewTick;
+    if (targetTick <= 0 || targetTick > this.serverTick) {
+      targetTick = this.serverTick; // Fallback to current
+    }
+    const minTick = this.serverTick - LAGCOMP_HISTORY_TICKS;
+    if (targetTick < minTick) {
+      targetTick = minTick; // Clamp to oldest available
+    }
+
+    let closest = maxRange;
     let hitPlayer: ServerPlayer | null = null;
     let hitBot: ServerBot | null = null;
     let head = false;
 
-    // Check other players
+    // Check other players at targetTick
     for (const p of this.players.values()) {
-      if (p === shooter || !p.alive) continue;
-      const result = this.raycastEntity(origin, dx, dy, dz, p.sim.pos, hitRadius);
+      if (p === shooter) continue;
+
+      // Rewind target to viewTick
+      const state = this.getPlayerStateAt(p.id, targetTick);
+      if (!state || !state.alive) continue;
+
+      const result = this.raycastEntity(origin, dx, dy, dz, state, hitRadius);
       if (result && result.dist < closest) {
         closest = result.dist;
         hitPlayer = p;
@@ -260,7 +465,7 @@ export class GameWorld {
       }
     }
 
-    // Check bots
+    // Check bots at targetTick (bots don't have lag-comp history, use current)
     for (const b of this.bots) {
       if (!b.alive) continue;
       const result = this.raycastEntity(origin, dx, dy, dz, b.sim.pos, hitRadius);
@@ -271,7 +476,7 @@ export class GameWorld {
       }
     }
 
-    // Apply damage
+    // Apply damage (to current authoritative state)
     if (hitPlayer) {
       const dmg = head ? DAMAGE_HEAD : DAMAGE_BODY;
       hitPlayer.hp -= dmg;
@@ -308,7 +513,7 @@ export class GameWorld {
     const sy = target.y - origin.y;
     const sz = target.z - origin.z;
     const dot = sx * dx + sy * dy + sz * dz;
-    if (dot < 0) return null;
+    if (dot < 0 || dot > HITSCAN_MAX_RANGE) return null;
     const cx = origin.x + dx * dot;
     const cy = origin.y + dy * dot;
     const cz = origin.z + dz * dot;

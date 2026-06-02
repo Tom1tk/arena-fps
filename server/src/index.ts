@@ -18,6 +18,7 @@ import { fileURLToPath } from 'url';
 import { LobbyManager } from './lobby.js';
 import { GameWorld } from './gameWorld.js';
 import { MAX_PLAYERS, NAME_MIN, NAME_MAX, HEARTBEAT_INTERVAL_S, HEARTBEAT_MISS_LIMIT, SERVER_TICK_HZ, TICK_DT } from '../../shared/constants.js';
+import type { InputFrame } from '../../shared/types.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // Client dist is at <project_root>/dist/client — server JS is at <project_root>/dist/server/server/src/
@@ -258,7 +259,7 @@ function handleMessage(ws: WebSocket, msg: any): void {
     }
 
     case 'input': {
-      // Client game input
+      // Client game input with optional redundancy
       const pInfo = lobbyManager.getPlayer(ws);
       if (!pInfo || !pInfo.room.gameWorld) {
         ws.send(JSON.stringify({ type: 'error', message: 'Not in a match' }));
@@ -267,7 +268,8 @@ function handleMessage(ws: WebSocket, msg: any): void {
       const world = pInfo.room.gameWorld;
       const player = [...world.players.values()].find(p => p.ws === ws);
       if (player) {
-        const input = {
+        // Process primary input
+        const input: InputFrame = {
           seq: msg.seq as number,
           viewTick: msg.viewTick as number,
           moveX: msg.moveX as number,
@@ -277,6 +279,20 @@ function handleMessage(ws: WebSocket, msg: any): void {
           buttons: msg.buttons as number,
         };
         world.processInput(player.id, input);
+        // Process redundant inputs
+        if (msg.redundant && Array.isArray(msg.redundant)) {
+          for (const r of msg.redundant) {
+            world.processInput(player.id, {
+              seq: r.seq as number,
+              viewTick: r.viewTick as number,
+              moveX: r.moveX as number,
+              moveZ: r.moveZ as number,
+              yaw: r.yaw as number,
+              pitch: r.pitch as number,
+              buttons: r.buttons as number,
+            });
+          }
+        }
       }
       break;
     }
@@ -313,17 +329,20 @@ const gameTickInterval = setInterval(() => {
       // Run game tick
       const snapshot = room.gameWorld.tick();
 
-      // Broadcast snapshot to all players in room
-      const data = JSON.stringify({
-        type: 'snapshot',
-        tick: snapshot.serverTick,
-        players: snapshot.players,
-        events: snapshot.events,
-      });
+      // Broadcast snapshot to all players with per-client ack
       for (const [playerWs] of room.players) {
-        if (playerWs.readyState === WebSocket.OPEN) {
-          playerWs.send(data);
-        }
+        if (playerWs.readyState !== WebSocket.OPEN) continue;
+        // Get per-player ack seq
+        const player = [...room.gameWorld.players.values()].find(p => p.ws === playerWs);
+        const ackInputSeq = player ? player.ackInputSeq : 0;
+        const data = JSON.stringify({
+          type: 'snapshot',
+          tick: snapshot.serverTick,
+          ackInputSeq,
+          players: snapshot.players,
+          events: snapshot.events,
+        });
+        playerWs.send(data);
       }
     }
   }

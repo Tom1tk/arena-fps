@@ -51,7 +51,8 @@ export type SnapshotEvent =
   | { type: 'Shot'; id: number; origin: { x: number; y: number; z: number }; dir: { x: number; y: number; z: number } }
   | { type: 'Jump'; id: number }
   | { type: 'Land'; id: number }
-  | { type: 'Footstep'; id: number };
+  | { type: 'Footstep'; id: number }
+  | { type: 'MatchEnd'; id: number; kills: number };
 
 export interface Snapshot {
   serverTick: number;

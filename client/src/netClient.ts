@@ -4,8 +4,9 @@ import {
   NAME_MIN,
   NAME_MAX,
   LOBBY_CODE_LENGTH,
+  INPUT_REDUNDANCY,
 } from '../../shared/constants';
-import type { Snapshot, PlayerState } from '../../shared/types';
+import type { Snapshot, PlayerState, InputFrame } from '../../shared/types';
 
 // --- Types ---
 
@@ -127,15 +128,52 @@ export class NetClient {
     this.send({ type: 'start' });
   }
 
-  /** Send game input to server. */
-  sendInput(seq: number, moveX: number, moveZ: number, yaw: number, pitch: number, buttons: number): void {
-    this.send({
+  /** Send game input to server with redundancy.
+   *
+   * Keeps the last INPUT_REDUNDANCY unacked inputs and sends them
+   * alongside each new input so a single dropped packet doesn't stall
+   * the server (§4.2).
+   */
+  sendInput(input: InputFrame): void {
+    // Buffer for redundancy
+    if (!this.inputBuffer) this.inputBuffer = [];
+    this.inputBuffer.push(input);
+    // Trim old inputs (keep last INPUT_REDUNDANCY + 1)
+    while (this.inputBuffer.length > INPUT_REDUNDANCY + 1) {
+      this.inputBuffer.shift();
+    }
+
+    // Build message with primary + redundant inputs
+    const msg: Record<string, any> = {
       type: 'input',
-      seq,
-      viewTick: 0,
-      moveX, moveZ, yaw, pitch, buttons,
-    });
+      seq: input.seq,
+      viewTick: input.viewTick,
+      moveX: input.moveX, moveZ: input.moveZ,
+      yaw: input.yaw, pitch: input.pitch,
+      buttons: input.buttons,
+    };
+    // Append redundant inputs
+    const redundant = this.inputBuffer.slice(0, -1); // all but the latest
+    if (redundant.length > 0) {
+      msg.redundant = redundant.map(i => ({
+        seq: i.seq, viewTick: i.viewTick,
+        moveX: i.moveX, moveZ: i.moveZ,
+        yaw: i.yaw, pitch: i.pitch,
+        buttons: i.buttons,
+      }));
+    }
+    this.send(msg);
   }
+
+  /** Remove acked inputs from buffer */
+  ackInputs(ackSeq: number): void {
+    if (!this.inputBuffer) return;
+    while (this.inputBuffer.length > 0 && this.inputBuffer[0].seq <= ackSeq) {
+      this.inputBuffer.shift();
+    }
+  }
+
+  private inputBuffer: InputFrame[] | null = null;
 
   /** Disconnect from server. */
   disconnect(): void {

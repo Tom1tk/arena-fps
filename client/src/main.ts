@@ -953,86 +953,113 @@ function renderLoop(now: number): void {
     return;
   }
 
-  // --- NETWORKED MODE: send input + render from server snapshots ---
+  // --- NETWORKED MODE: client prediction + server reconciliation ---
   if (networkedMode && netGame && inputSource) {
-    // Send input to server
+    // 1. Poll input from keyboard/mouse source
     const input = inputSource.poll();
     const yaw = inputSource.getYaw();
     const pitch = inputSource.getPitch();
 
-    // Build button bits from input
-    const buttons = input.buttons;
-
+    // 2. Build InputFrame with proper viewTick for server lag compensation
     inputSeq++;
-    netGame.sendInput(inputSeq, {
+    const inputFrame: InputFrame = {
+      seq: inputSeq,
+      viewTick: netGame.viewTick,
       moveX: input.moveX,
       moveZ: input.moveZ,
       yaw,
       pitch,
-      buttons,
-    });
+      buttons: input.buttons,
+    };
 
-    // Update from server snapshot
-    netGame.update();
-    const me = netGame.getMe();
-    if (me) {
-      // Smooth camera position via lerp (reduces jitter from 30Hz snapshots)
-      netCamTarget.x = me.pos.x;
-      netCamTarget.y = me.pos.y;
-      netCamTarget.z = me.pos.z;
-      const lerpFactor = 1 - Math.exp(-netCamLerpSpeed * frameDt);
-      netCamPos.x += (netCamTarget.x - netCamPos.x) * lerpFactor;
-      netCamPos.y += (netCamTarget.y - netCamPos.y) * lerpFactor;
-      netCamPos.z += (netCamTarget.z - netCamPos.z) * lerpFactor;
+    // 3. Queue input for redundancy tracking
+    netGame.queueInput(inputFrame);
 
-      // Position from smoothed server pos, rotation from client (smooth)
-      camera.position.set(netCamPos.x, netCamPos.y, netCamPos.z);
-      camera.rotation.order = 'YXZ';
-      camera.rotation.y = yaw;
-      camera.rotation.x = pitch;
+    // 4. Step local prediction for zero-latency movement (§4.4)
+    netGame.stepPrediction(inputFrame, TICK_DT);
 
-      // Update HUD from server state
-      hp = me.hp;
-      ammo = me.ammo;
-      isDead = !me.alive;
-      kills = me.kills;
-      playerDeaths = me.deaths ?? playerDeaths;
-      reloading = me.reloading;
+    // 5. Send to server (NetClient handles INPUT_REDUNDANCY)
+    netGame.net.sendInput(inputFrame);
 
-      // Handle death overlay
-      if (!me.alive) {
-        deathOverlay.style.display = 'flex';
-      } else {
-        deathOverlay.style.display = 'none';
-      }
+    // 6. Process new server snapshot if available
+    const latestSnapshot = netGame.net.latestSnapshot;
+    if (latestSnapshot && latestSnapshot.serverTick > netGame.lastServerTick) {
+      // Reconcile prediction + update entities (§4.4 / §4.6)
+      netGame.update(latestSnapshot);
+
+      // Trim acked inputs from client buffer
+      netGame.net.ackInputs(latestSnapshot.ackInputSeq);
     }
 
-    // Update remote players
-    if (remotePlayers) {
-      remotePlayers.update(netGame.getAll(), camera);
+    // 7. Update error smoothing decay (§4.4 visual correction)
+    netGame.updateSmooth(frameDt);
+
+    // 8. Camera position from predicted state (with error smoothing)
+    const myPos = netGame.getMyPredictedPos();
+    camera.position.set(myPos.x, myPos.y, myPos.z);
+    camera.rotation.order = 'YXZ';
+    camera.rotation.y = yaw;
+    camera.rotation.x = pitch;
+
+    // 9. Update HUD from predicted state
+    hp = netGame.predictedHp;
+    ammo = netGame.predictedAmmo;
+    isDead = !netGame.predictedAlive;
+    reloading = netGame.predictedReloading;
+
+    // Get kills/deaths from my entity (authoritative)
+    const myEntity = netGame.getEntity(netGame.myId ?? -1);
+    if (myEntity) {
+      kills = myEntity.kills;
+      playerDeaths = myEntity.deaths ?? playerDeaths;
     }
 
-    // Process server events — only once per new tick to avoid re-firing
-    if (netGame.lastTick !== lastProcessedTick) {
-      lastProcessedTick = netGame.lastTick;
+    // Handle death overlay
+    if (!netGame.predictedAlive) {
+      deathOverlay.style.display = 'flex';
+    } else {
+      deathOverlay.style.display = 'none';
+    }
+
+    // 10. Update remote players with interpolation (§4.6)
+    if (remotePlayers && netGame) {
+      const remotes = netGame.getRemotes();
+      // Feed interpolated entities into remote player manager
+      const remoteEntities: typeof remotes = remotes.map(e => {
+        const interpPos = netGame!.getInterpolatedPos(e);
+        return {
+          ...e,
+          pos: interpPos || e.pos,
+        };
+      });
+      remotePlayers.update(remoteEntities, camera);
+    }
+
+    // 11. Process server events — only once per new tick to avoid re-firing
+    if (netGame.lastServerTick !== lastProcessedTick) {
+      lastProcessedTick = netGame.lastServerTick;
+      const myId = netGame.myId;
       for (const evt of netGame.pendingEvents) {
         if (evt.type === 'Kill') {
-          const killer = netGame.get((evt as any).killer);
-          const victim = netGame.get((evt as any).victim);
+          const killEvt = evt as { type: 'Kill'; killer: number; victim: number };
+          const killer = netGame.getEntity(killEvt.killer);
+          const victim = netGame.getEntity(killEvt.victim);
           if (killer && victim) {
             addKillFeedEntry(killer.name, victim.name, false);
             playKill();
           }
         }
         if (evt.type === 'Hit') {
-          const hitEvt = evt as any;
-          if (hitEvt.by === me?.id) {
+          const hitEvt = evt as { type: 'Hit'; by: number; target: number; dmg: number; head: boolean };
+          if (myId !== null && hitEvt.by === myId) {
             showHitMarker();
-          } else if (hitEvt.target === me?.id) {
+          } else if (myId !== null && hitEvt.target === myId) {
             showDamageIndicator();
           }
         }
       }
+      // Clear processed events to avoid re-processing
+      netGame.pendingEvents.length = 0;
     }
 
     // --- Networked viewmodel & animations ---
@@ -1043,16 +1070,16 @@ function renderLoop(now: number): void {
         playShoot();
       }
       viewmodel.update(frameDt, input.moveX !== 0 || input.moveZ !== 0);
-      // Handle reload state
       viewmodel.setReloading(reloading);
     }
 
     // --- Networked scoreboard ---
-    if (netGame) {
-      const allEntities = netGame.getAll();
-      let sbText = `${getPlayerName()}: ${kills}K / ${playerDeaths}D`;
-      scoreboardEl.innerHTML = sbText;
+    const allEntities = netGame.getRemotes();
+    let sbText = `${getPlayerName()}: ${kills}K / ${playerDeaths}D`;
+    for (const e of allEntities) {
+      sbText += ` | ${e.name}: ${e.kills}K`;
     }
+    scoreboardEl.innerHTML = sbText;
 
     return; // Skip the practice-mode simulation below
   }
