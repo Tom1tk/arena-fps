@@ -87,6 +87,9 @@ export interface ServerPlayer {
   // Per-client ack tracking (§4.3)
   // BUG FIX: ackInputSeq = highest input seq actually SIMULATED
   ackInputSeq: number;
+  // Audio events
+  footstepAccum: number;  // ticks since last footstep
+  prevGrounded: boolean;
   connected: boolean;
 }
 
@@ -162,6 +165,8 @@ export class GameWorld {
       lastIntent: null, intentRepeatTicks: 0,
       lagCompHistory: [],
       ackInputSeq: 0,
+      footstepAccum: 0,
+      prevGrounded: false,
       connected: true,
     };
     this.players.set(playerId, p);
@@ -242,6 +247,23 @@ export class GameWorld {
       return !(Math.abs(o.x - op!.sim.pos.x) < 1 && Math.abs(o.z - op!.sim.pos.z) < 1);
     });
     playerStep(p.sim, input, dt, WORLD_BOUNDS, OBSTACLES, others);
+
+    // Footstep events
+    if (p.sim.grounded && (input.moveX !== 0 || input.moveZ !== 0)) {
+      p.footstepAccum++;
+      if (p.footstepAccum >= 3) { // every 3 ticks (~0.1s at 30Hz)
+        this.events.push({ type: 'Footstep', id: p.id });
+        p.footstepAccum = 0;
+      }
+    } else {
+      p.footstepAccum = 0;
+    }
+
+    // Land event
+    if (!p.prevGrounded && p.sim.grounded) {
+      this.events.push({ type: 'Land', id: p.id });
+    }
+    p.prevGrounded = p.sim.grounded;
   }
 
   /**
@@ -621,6 +643,8 @@ export class GameWorld {
     p.sim.yaw = sp.yaw; p.sim.pitch = 0; p.sim.grounded = false;
     p.hp = PLAYER_MAX_HP; p.ammo = MAG_SIZE; p.alive = true;
     p.reloading = false; p.reloadTimer = 0; p.fireCooldown = 0;
+    p.footstepAccum = 0;
+    p.prevGrounded = false;
     this.recentSpawns.push({ pos: { ...p.sim.pos }, time: Date.now() / 1000 });
     this.events.push({ type: 'Spawn', id: p.id, pos: { ...p.sim.pos } });
   }

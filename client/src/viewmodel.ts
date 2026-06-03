@@ -27,6 +27,11 @@ export class ViewModel {
   private recoilOffset = 0;
   private reloadAngle = 0;
   private isReloading = false;
+  // Weapon sway from camera head turns (distinct from walk bob)
+  private swayX = 0;
+  private swayY = 0;
+  private prevYaw = 0;
+  private prevPitch = 0;
 
   constructor(scene: THREE.Scene, camera: THREE.Camera) {
     this.group = new THREE.Group();
@@ -93,8 +98,10 @@ export class ViewModel {
    * Update animation state each frame.
    * @param dt Frame delta time
    * @param isMoving Whether the player is currently moving
+   * @param yaw Current camera yaw (radians) for head-turn sway
+   * @param pitch Current camera pitch (radians) for head-turn sway
    */
-  update(dt: number, isMoving: boolean): void {
+  update(dt: number, isMoving: boolean, yaw: number = 0, pitch: number = 0): void {
     // Recoil recovery
     this.recoilAngle *= Math.max(0, 1 - RECOIL_RECOVERY * dt);
     this.recoilOffset *= Math.max(0, 1 - RECOIL_RECOVERY * dt);
@@ -115,9 +122,19 @@ export class ViewModel {
       bobY = Math.abs(Math.sin(t * BOB_SPEED)) * BOB_AMPLITUDE;
     }
 
+    // Weapon sway from head turns
+    const yawDelta = yaw - this.prevYaw;
+    const pitchDelta = pitch - this.prevPitch;
+    this.swayX += yawDelta * 0.03;
+    this.swayY -= pitchDelta * 0.03;
+    this.swayX *= Math.max(0, 1 - 4 * dt);
+    this.swayY *= Math.max(0, 1 - 4 * dt);
+    this.prevYaw = yaw;
+    this.prevPitch = pitch;
+
     // Apply all transforms
-    this.group.position.x = 0.25 + bobX;
-    this.group.position.y = -0.2 + bobY;
+    this.group.position.x = 0.25 + bobX + this.swayX;
+    this.group.position.y = -0.2 + bobY + this.swayY;
     this.group.rotation.x = -this.recoilAngle + this.reloadAngle;
     this.group.position.z = -0.5 + this.recoilOffset;
   }

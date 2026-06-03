@@ -77,6 +77,24 @@ export const SMOOTH_TAU_MS = 100;
 export const HEARTBEAT_INTERVAL_S = 25;
 export const HEARTBEAT_MISS_LIMIT = 3;
 
+// --- Audio ---
+export const AUDIO_MAX_DISTANCE = 60;
+export const AUDIO_REF_DISTANCE = 3;
+export const AUDIO_ROLLOFF_FACTOR = 1;
+export const AUDIO_FOOTSTEP_INTERVAL_TICKS = 3; // footsteps every 3 server ticks (~0.1s)
+export const AUDIO_SHOOT_VOLUME = 0.4;
+export const AUDIO_RELOAD_VOLUME = 0.2;
+export const AUDIO_FOOTSTEP_VOLUME = 0.15;
+export const AUDIO_JUMP_VOLUME = 0.1;
+export const AUDIO_LAND_VOLUME = 0.2;
+
+// --- HUD ---
+export const KILL_FEED_MAX = 8;
+export const KILL_FEED_DURATION_S = 5;
+export const HIT_MARKER_DURATION_S = 0.15;
+export const DAMAGE_INDICATOR_DURATION_S = 0.3;
+export const FPS_COUNTER_MAX_FPS = 240;
+
 // --- Arena layout (shared between client & server) ---
 export const ARENA_HALF = 20;
 

@@ -5,6 +5,7 @@ import {
   TICK_DT, PLAYER_MAX_HP, MAG_SIZE, PLAYER_RADIUS, FIRE_RATE_RPM,
   DAMAGE_BODY, DAMAGE_HEAD, HITSCAN_MAX_RANGE, SPREAD_RAD, RELOAD_TIME_S,
   KILL_GOAL, POST_MATCH_DURATION_S, RESPAWN_DELAY_S, SPAWN_POSITIONS,
+  KILL_FEED_MAX, KILL_FEED_DURATION_S, HIT_MARKER_DURATION_S, DAMAGE_INDICATOR_DURATION_S,
 } from '../../shared/constants';
 import { MAX_PLAYERS } from '../../shared/constants';
 import { playerStep, type PlayerSim } from '../../shared/simulation/step';
@@ -16,7 +17,7 @@ import { SettingsStore } from './settingsStore';
 import { KeyboardMouseSource } from './inputSource';
 import { createDummyTargets, type DummyTarget, raycastHitscan, BOT_DAMAGE } from './hitscan';
 import { ViewModel } from './viewmodel';
-import { playShoot, playReload, playKill } from './audio';
+import { playShoot, playReload, playKill, playShootRemote, playReloadRemote, playFootstepRemote, playJumpRemote, playLandRemote, setupAudioListener } from './audio';
 import { selectSpawnPoint } from '../../shared/spawn-selection';
 import { NetGame } from './netGame';
 import { RemotePlayerManager } from './remotePlayers';
@@ -483,9 +484,12 @@ interface KillFeedEntry {
   victim: string;
   headshot: boolean;
   time: number;
+  // DOM element for animated entries
+  el?: HTMLElement;
 }
 let killFeed: KillFeedEntry[] = [];
-const KILL_FEED_MAX = 8;
+// Pending Hit events: victimId -> headshot flag, matched on Kill event
+const pendingHits: Map<number, boolean> = new Map();
 let killFeedTimer = 0; // how long entries stay visible (s)
 
 // Semi-auto fire: edge-triggered per click, with fire-rate cap
@@ -724,22 +728,38 @@ function updateHUD(): void {
 let hitMarkerTimer = 0;
 function showHitMarker(): void {
   hitMarker.classList.add('show');
-  hitMarkerTimer = 0.15;
+  hitMarkerTimer = HIT_MARKER_DURATION_S;
 }
 
 // --- M3: Kill feed ---
 function addKillFeedEntry(killer: string, victim: string, headshot: boolean): void {
-  killFeed.push({ killer, victim, headshot, time: performance.now() / 1000 });
-  if (killFeed.length > KILL_FEED_MAX) killFeed.shift();
-  killFeedTimer = 5; // entries fade after 5s
+  // Create individual animated div with slide-in
+  const entryEl = document.createElement('div');
+  entryEl.className = 'kill-feed-entry slide-in';
+  entryEl.style.color = killer === 'You' ? '#8f8' : '#faa';
+  entryEl.textContent = `${headshot ? '\u2726 ' : ''}${killer} → ${victim}`;
+  killFeedEl.appendChild(entryEl);
+
+  const entry: KillFeedEntry = { killer, victim, headshot, time: performance.now() / 1000, el: entryEl };
+  killFeed.push(entry);
+  if (killFeed.length > KILL_FEED_MAX) {
+    const old = killFeed.shift()!;
+    if (old.el) old.el.remove();
+  }
+  killFeedTimer = KILL_FEED_DURATION_S; // entries fade after KILL_FEED_DURATION_S
 }
 
 function updateKillFeedUI(): void {
   const now = performance.now() / 1000;
-  const lines = killFeed
-    .filter(e => now - e.time < killFeedTimer)
-    .map(e => `<div style="color:${e.killer === 'You' ? '#8f8' : '#faa'}">${e.headshot ? '✦ ' : ''}${e.killer} → ${e.victim}</div>`).join('');
-  killFeedEl.innerHTML = lines;
+  // Remove expired entries from DOM and array
+  while (killFeed.length > 0 && now - killFeed[0].time >= killFeedTimer) {
+    const old = killFeed.shift()!;
+    if (old.el) {
+      old.el.classList.add('fade-out');
+      const el = old.el;
+      setTimeout(() => el.remove(), 400);
+    }
+  }
 }
 
 // --- M3: Match state ---
@@ -826,9 +846,21 @@ function respawnPlayer(now: number): void {
 
 // --- M3: Damage indicator ---
 let damageFlashTimer = 0;
-function showDamageIndicator(): void {
+let lastDamageAmount = 0;
+function showDamageIndicator(dmg: number = 0): void {
+  lastDamageAmount = dmg;
   damageIndicator.style.borderColor = 'rgba(255,0,0,0.6)';
-  damageFlashTimer = 0.15;
+  damageFlashTimer = DAMAGE_INDICATOR_DURATION_S;
+  // Show damage amount
+  let dmgEl = damageIndicator.querySelector('.dmg-val') as HTMLElement | null;
+  if (!dmgEl) {
+    dmgEl = document.createElement('div');
+    dmgEl.className = 'dmg-val';
+    dmgEl.style.cssText = 'position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font:bold 24px monospace;color:#f44;text-shadow:0 0 8px #f00;pointer-events:none;';
+    damageIndicator.appendChild(dmgEl);
+  }
+  dmgEl.textContent = `-${dmg}`;
+  dmgEl.style.opacity = '1';
 }
 
 function updateOverlays(dt: number): void {
@@ -852,8 +884,16 @@ function updateOverlays(dt: number): void {
   // Damage indicator decay
   if (damageFlashTimer > 0) {
     damageFlashTimer -= dt;
+    const opacity = Math.max(0, damageFlashTimer / DAMAGE_INDICATOR_DURATION_S);
+    damageIndicator.style.borderColor = `rgba(255,0,0,${opacity.toFixed(2)})`;
+    // Fade out damage amount text
+    const dmgEl = damageIndicator.querySelector('.dmg-val') as HTMLElement | null;
+    if (dmgEl) {
+      dmgEl.style.opacity = String(opacity.toFixed(2));
+    }
     if (damageFlashTimer <= 0) {
       damageIndicator.style.borderColor = 'rgba(255,0,0,0)';
+      if (dmgEl) dmgEl.style.opacity = '0';
     }
   }
 }
@@ -1164,8 +1204,13 @@ function renderLoop(now: number): void {
           const killer = netGame.getEntity(killEvt.killer);
           const victim = netGame.getEntity(killEvt.victim);
           if (killer && victim) {
-            addKillFeedEntry(killer.name, victim.name, false);
-            playKill();
+            const headshot = pendingHits.get(killEvt.victim) || false;
+            pendingHits.delete(killEvt.victim);
+            addKillFeedEntry(killer.name, victim.name, headshot);
+            // Only play kill sound for own kills
+            if (myId !== null && killEvt.killer === myId) {
+              playKill();
+            }
           }
         }
         if (evt.type === 'Hit') {
@@ -1173,7 +1218,45 @@ function renderLoop(now: number): void {
           if (myId !== null && hitEvt.by === myId) {
             showHitMarker();
           } else if (myId !== null && hitEvt.target === myId) {
-            showDamageIndicator();
+            showDamageIndicator(hitEvt.dmg);
+          }
+          // Track last hit for headshot matching on kills
+          pendingHits.set(hitEvt.target, hitEvt.head);
+        }
+
+        // --- Remote positional audio events ---
+        if (evt.type === 'Shot') {
+          const shotEvt = evt as { type: 'Shot'; id: number; origin: { x: number; y: number; z: number }; dir: { x: number; y: number; z: number } };
+          if (myId !== null && shotEvt.id !== myId) {
+            playShootRemote(shotEvt.origin);
+          }
+        }
+        if (evt.type === 'ReloadStart') {
+          const reloadEvt = evt as { type: 'ReloadStart'; id: number };
+          if (myId !== null && reloadEvt.id !== myId) {
+            const re = netGame.getEntity(reloadEvt.id);
+            if (re) playReloadRemote(re.pos);
+          }
+        }
+        if (evt.type === 'Jump') {
+          const jumpEvt = evt as { type: 'Jump'; id: number };
+          if (myId !== null && jumpEvt.id !== myId) {
+            const je = netGame.getEntity(jumpEvt.id);
+            if (je) playJumpRemote(je.pos);
+          }
+        }
+        if (evt.type === 'Land') {
+          const landEvt = evt as { type: 'Land'; id: number };
+          if (myId !== null && landEvt.id !== myId) {
+            const le = netGame.getEntity(landEvt.id);
+            if (le) playLandRemote(le.pos);
+          }
+        }
+        if (evt.type === 'Footstep') {
+          const fpEvt = evt as { type: 'Footstep'; id: number };
+          if (myId !== null && fpEvt.id !== myId) {
+            const fp = netGame.getEntity(fpEvt.id);
+            if (fp) playFootstepRemote(fp.pos);
           }
         }
       }
@@ -1189,7 +1272,7 @@ function renderLoop(now: number): void {
         playShoot();
       }
       const vmInput = inputSource.poll();
-      viewmodel.update(frameDt, vmInput.moveX !== 0 || vmInput.moveZ !== 0);
+      viewmodel.update(frameDt, vmInput.moveX !== 0 || vmInput.moveZ !== 0, inputSource.getYaw(), inputSource.getPitch());
       viewmodel.setReloading(reloading);
     }
 
@@ -1380,6 +1463,8 @@ function renderLoop(now: number): void {
 (async () => {
   await initRenderer();
   applyQuality(settings.get().graphicsQuality);
+  // Setup directional audio listener
+  setupAudioListener(camera);
   updateCrosshair();
   updateHUD();
   requestAnimationFrame(renderLoop);
