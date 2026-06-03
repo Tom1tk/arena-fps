@@ -349,71 +349,50 @@ const gameTickInterval = setInterval(() => {
         playerWs.send(data);
       }
 
-      // When match just ended, broadcast match_end with scoreboard once
-      if (room.gameWorld.matchEnded && room.gameWorld.matchEndedAt) {
-        const elapsed = (Date.now() - room.gameWorld.matchEndedAt) / 1000;
-        if (elapsed < 0.1) {
-          // Broadcast match_end with scoreboard (only once, on first tick after end)
-          const scoreboard = [...room.gameWorld.players.values()].map(p => ({
-            id: p.id,
-            name: p.name,
-            kills: p.kills,
-            deaths: p.deaths,
-            left: p.connected,
-          }));
-          lobbyManager.broadcast(room.code, {
-            type: 'match_end',
-            scoreboard,
-          });
-        }
-        if (elapsed >= POST_MATCH_DURATION_S) {
-          // Transition to post_match, then reset to lobby
-          room.phase = 'post_match';
-          const roster = [...room.players.values()];
-          lobbyManager.broadcast(room.code, { type: 'return_to_lobby', roster });
-          room.gameWorld = null;
-          for (const [, p] of room.players) {
-            p.ready = false;
-          }
-          room.phase = 'lobby';
-          lobbyManager.broadcastRoster(room.code);
-          console.log(`[Game] Room ${room.code} reset to lobby`);
-        }
+      // When the match ends, enter post_match exactly once and broadcast
+      // match_end + scoreboard. The post_match block below owns the timed
+      // scoreboard window and the eventual lobby reset.
+      if (room.gameWorld.matchEnded) {
+        const scoreboard = [...room.gameWorld.players.values()].map(p => ({
+          id: p.id,
+          name: p.name,
+          kills: p.kills,
+          deaths: p.deaths,
+          left: !p.connected,
+        }));
+        room.phase = 'post_match';
+        lobbyManager.broadcast(room.code, { type: 'match_end', scoreboard });
+        console.log(`[Game] Room ${room.code} match ended -> post_match`);
       }
     }
 
-    // Handle post_match phase — keep snapshots flowing briefly before reset
-    if (room.phase === 'post_match' && room.gameWorld) {
-      if (room.gameWorld.matchEndedAt) {
-        const elapsed = (Date.now() - room.gameWorld.matchEndedAt) / 1000;
-        if (elapsed < POST_MATCH_DURATION_S) {
-          // Still within post-match window, keep ticking for snapshots
-          const snapshot = room.gameWorld.tick();
-          for (const [playerWs] of room.players) {
-            if (playerWs.readyState !== WebSocket.OPEN) continue;
-            const player = [...room.gameWorld.players.values()].find(p => p.ws === playerWs);
-            const ackInputSeq = player ? player.ackInputSeq : 0;
-            const data = JSON.stringify({
-              type: 'snapshot',
-              tick: snapshot.serverTick,
-              ackInputSeq,
-              players: snapshot.players,
-              events: snapshot.events,
-            });
-            playerWs.send(data);
-          }
-        } else {
-          // Post-match timer expired — reset to lobby
-          const roster = [...room.players.values()];
-          lobbyManager.broadcast(room.code, { type: 'return_to_lobby', roster });
-          room.gameWorld = null;
-          for (const [, p] of room.players) {
-            p.ready = false;
-          }
-          room.phase = 'lobby';
-          lobbyManager.broadcastRoster(room.code);
-          console.log(`[Game] Room ${room.code} reset to lobby`);
+    // Post-match: keep ticking/broadcasting for the scoreboard background,
+    // then reset to the LOBBY (players stay connected and re-ready).
+    else if (room.phase === 'post_match' && room.gameWorld) {
+      const endedAt = room.gameWorld.matchEndedAt ?? Date.now();
+      const elapsed = (Date.now() - endedAt) / 1000;
+      if (elapsed < POST_MATCH_DURATION_S) {
+        const snapshot = room.gameWorld.tick();
+        for (const [playerWs] of room.players) {
+          if (playerWs.readyState !== WebSocket.OPEN) continue;
+          const player = [...room.gameWorld.players.values()].find(p => p.ws === playerWs);
+          const ackInputSeq = player ? player.ackInputSeq : 0;
+          playerWs.send(JSON.stringify({
+            type: 'snapshot',
+            tick: snapshot.serverTick,
+            ackInputSeq,
+            players: snapshot.players,
+            events: snapshot.events,
+          }));
         }
+      } else {
+        room.gameWorld = null;
+        for (const [, p] of room.players) p.ready = false;
+        room.phase = 'lobby';
+        const roster = [...room.players.values()];
+        lobbyManager.broadcast(room.code, { type: 'return_to_lobby', roster });
+        lobbyManager.broadcastRoster(room.code);
+        console.log(`[Game] Room ${room.code} reset to lobby`);
       }
     }
   }

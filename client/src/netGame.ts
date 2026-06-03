@@ -33,18 +33,14 @@ const OBSTACLES: SimAABB[] = SHARED_OBSTACLES.map(o => ({
   minY: o.min.y, maxY: o.max.y,
   minZ: o.min.z, maxZ: o.max.z,
 }));
-const WORLD_BOUNDS: SimAABB = {
-  minX: SHARED_OBSTACLES.length > 0 ? -50 : -50, maxX: 50,
-  minY: -10, maxY: 100,
-  minZ: -50, maxZ: 50,
-};
-
 // Import ARENA_HALF
 import { ARENA_HALF } from '../../shared/constants.js';
-WORLD_BOUNDS.minX = -ARENA_HALF;
-WORLD_BOUNDS.maxX = ARENA_HALF;
-WORLD_BOUNDS.minZ = -ARENA_HALF;
-WORLD_BOUNDS.maxZ = ARENA_HALF;
+
+const WORLD_BOUNDS: SimAABB = {
+  minX: -ARENA_HALF, maxX: ARENA_HALF,
+  minY: -10, maxY: 100,
+  minZ: -ARENA_HALF, maxZ: ARENA_HALF,
+};
 
 // --- Entity state for prediction + interpolation ---
 
@@ -168,7 +164,7 @@ export class NetGame {
       this.predictedSim.vel.z = myState.vel.z;
       this.predictedSim.yaw = myState.yaw;
       this.predictedSim.pitch = myState.pitch;
-      this.predictedSim.grounded = myState.pos.y < PLAYER_EYE_HEIGHT + 0.1; // approximate
+      this.predictedSim.grounded = !!(myState.flags & 2);
       this.predictedSim.crouching = myState.crouch;
 
       this.predictedHp = myState.hp;
@@ -401,11 +397,12 @@ export class NetGame {
     };
   }
 
-  /** Get remote entities (excluding self) */
+  /** Get remote entities (excluding self). Dead remotes are still returned so
+   *  interpolation history stays continuous; the renderer hides dead ones. */
   getRemotes(): EntityState[] {
     const result: EntityState[] = [];
     for (const e of this.entities.values()) {
-      if (!e.isMe && e.alive) {
+      if (!e.isMe) {
         result.push(e);
       }
     }

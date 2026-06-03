@@ -298,8 +298,7 @@ export class LobbyManager {
 
     // Add all players to game world — UNIFY serverId with GameWorld id
     for (const [ws, info] of room.players) {
-      const gwId = room.gameWorld!.addPlayer(ws, info.name, info.serverId);
-      console.log(`[Lobby] Match start: serverId=${info.serverId} gwId=${gwId} name=${info.name}`);
+      room.gameWorld!.addPlayer(ws, info.name, info.serverId);
     }
 
     this.broadcast(code, {

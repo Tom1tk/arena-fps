@@ -1085,14 +1085,13 @@ function renderLoop(now: number): void {
       return;
     }
 
-    // Handle return_to_lobby: clean up and show title
+    // Handle return_to_lobby: tear down the match but STAY connected so players
+    // can re-ready. The onChange('lobby') branch renders the roster + controls.
     if (netClient.phase === 'lobby') {
       endMatch();
-      netClient.disconnect();
       postMatchOverlay.style.display = 'none';
       postMatchStartTime = 0;
-      titleOverlay.style.display = 'flex';
-      hideAllSubMenus();
+      lobbyPanel.classList.add('visible');
       return;
     }
 

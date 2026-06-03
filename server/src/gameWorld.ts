@@ -148,7 +148,6 @@ export class GameWorld {
   addPlayer(ws: WebSocket, name: string, id?: number): number {
     const playerId = id ?? nextPlayerId++;
     const spawn = this.pickSpawn();
-    console.log(`[GameWorld] addPlayer id=${playerId} name=${name}`);
     const p: ServerPlayer = {
       ws, id: playerId, name,
       sim: {
@@ -389,7 +388,7 @@ export class GameWorld {
         pos: { ...p.sim.pos }, vel: { ...p.sim.vel },
         yaw: p.sim.yaw, pitch: p.sim.pitch,
         hp: p.hp, ammo: p.ammo, alive: p.alive,
-        crouch: p.sim.crouching, flags: p.reloading ? 1 : 0,
+        crouch: p.sim.crouching, flags: (p.reloading ? 1 : 0) | (p.sim.grounded ? 2 : 0),
         kills: p.kills, deaths: p.deaths,
       });
     }
