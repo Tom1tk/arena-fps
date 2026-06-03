@@ -6,6 +6,7 @@
  * All sounds are synthesized — no external audio files needed.
  *
  * Sound pooling: 8 reusable PositionalAudio nodes per sound type.
+ * Buffers are pre-generated once at init — no OfflineAudioContext per sound.
  */
 
 import * as THREE from 'three';
@@ -58,6 +59,12 @@ export function getAudioListener(): THREE.AudioListener | null {
 /** Type of positional sound we pool */
 type SoundPoolType = 'shoot' | 'footstep' | 'reload' | 'jump' | 'land';
 
+/** Cache key for pre-generated AudioBuffers */
+type BufferCacheKey = 'shoot' | 'footstep' | 'reload' | 'jump' | 'land';
+
+/** Pre-generated AudioBuffer for each sound type (one-shot, no OfflineAudioContext) */
+const bufferCache: Map<BufferCacheKey, AudioBuffer> = new Map();
+
 const POOL_SIZE = 8; // reusable nodes per type
 
 interface PositionalNode {
@@ -75,6 +82,148 @@ const soundPools: Record<SoundPoolType, PositionalNode[]> = {
 };
 
 /**
+ * Get the duration of a sound type for auto-release timing.
+ */
+function getSoundDuration(type: SoundPoolType): number {
+  switch (type) {
+    case 'shoot': return 0.08;
+    case 'footstep': return 0.05;
+    case 'reload': return 0.5;
+    case 'jump': return 0.12;
+    case 'land': return 0.15;
+  }
+}
+
+/**
+ * Generate all positional sound buffers once at init time.
+ * Writes directly to AudioBuffer channel data — no OfflineAudioContext needed.
+ */
+function generateAudioBuffers(ctx: AudioContext): void {
+  const sr = ctx.sampleRate;
+
+  // ── Shoot: ~80ms filtered noise burst with exponential decay ──
+  {
+    const duration = 0.08;
+    const sampleCount = Math.floor(sr * duration);
+    const buffer = ctx.createBuffer(1, sampleCount, sr);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < sampleCount; i++) {
+      const t = i / sampleCount;
+      // Band-pass shaped noise: high-frequency burst that decays quickly
+      const noise = (Math.random() * 2 - 1);
+      const envelope = Math.exp(-t / 0.15);
+      // Simulate lowpass sweep from 3000Hz to 300Hz by mixing noise bands
+      const highFreq = (Math.random() * 2 - 1) * (1 - t) * 0.6;
+      const lowFreq = (Math.random() * 2 - 1) * t * 0.4;
+      data[i] = (noise + highFreq - lowFreq) * envelope * 0.25;
+    }
+    bufferCache.set('shoot', buffer);
+  }
+
+  // ── Footstep: ~50ms low-pass noise ──
+  {
+    const duration = 0.05;
+    const sampleCount = Math.floor(sr * duration);
+    const buffer = ctx.createBuffer(1, sampleCount, sr);
+    const data = buffer.getChannelData(0);
+    // Generate raw noise
+    const raw: Float32Array = new Float32Array(sampleCount);
+    for (let i = 0; i < sampleCount; i++) {
+      raw[i] = (Math.random() * 2 - 1);
+    }
+    // Simple low-pass filter (IIR, 1-pole, cutoff ~1000Hz)
+    const cutoff = 1000;
+    const rc = 1.0 / (2 * Math.PI * cutoff);
+    const dt = 1.0 / sr;
+    const alpha = rc / (rc + dt);
+    let prev = 0;
+    for (let i = 0; i < sampleCount; i++) {
+      const t = i / sampleCount;
+      const envelope = Math.exp(-t / 0.2);
+      prev = prev + alpha * (raw[i] - prev);
+      data[i] = prev * envelope * 0.5;
+    }
+    bufferCache.set('footstep', buffer);
+  }
+
+  // ── Reload: ~500ms of two click tones ──
+  {
+    const duration = 0.5;
+    const sampleCount = Math.floor(sr * duration);
+    const buffer = ctx.createBuffer(1, sampleCount, sr);
+    const data = buffer.getChannelData(0);
+    // First click at t=0, freq=800Hz
+    // Second click at t=0.25, freq=1200Hz
+    for (let i = 0; i < sampleCount; i++) {
+      const t = i / sr;
+      let sample = 0;
+      // Click 1: centered at 0ms
+      {
+        const dt = t - 0.0;
+        if (Math.abs(dt) < 0.05) {
+          const env = Math.exp(-Math.abs(dt) / 0.015);
+          sample += Math.sin(2 * Math.PI * 800 * dt) * env * 0.15;
+        }
+      }
+      // Click 2: centered at 250ms
+      {
+        const dt = t - 0.25;
+        if (Math.abs(dt) < 0.05) {
+          const env = Math.exp(-Math.abs(dt) / 0.015);
+          sample += Math.sin(2 * Math.PI * 1200 * dt) * env * 0.15;
+        }
+      }
+      data[i] = sample;
+    }
+    bufferCache.set('reload', buffer);
+  }
+
+  // ── Jump: ~120ms rising sine tone (300Hz → 600Hz) ──
+  {
+    const duration = 0.12;
+    const sampleCount = Math.floor(sr * duration);
+    const buffer = ctx.createBuffer(1, sampleCount, sr);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < sampleCount; i++) {
+      const t = i / sr;
+      const normalized = i / sampleCount;
+      // Exponential frequency ramp: 300 → 600 Hz
+      const freq = 300 * Math.exp(Math.log(2) * normalized);
+      // Instantaneous phase via integration approximation
+      const phase = 2 * Math.PI * 300 * t * (1 + normalized);
+      const envelope = Math.exp(-normalized / 0.3);
+      data[i] = Math.sin(phase) * envelope * 0.2;
+    }
+    bufferCache.set('jump', buffer);
+  }
+
+  // ── Land: ~150ms low-frequency thud + noise ──
+  {
+    const duration = 0.15;
+    const sampleCount = Math.floor(sr * duration);
+    const buffer = ctx.createBuffer(1, sampleCount, sr);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < sampleCount; i++) {
+      const t = i / sr;
+      const normalized = i / sampleCount;
+      // Oscillator thud: 80Hz → 30Hz exponential decay
+      const freq = 80 * Math.exp(Math.log(30 / 80) * normalized);
+      const phase = 2 * Math.PI * freq * t;
+      const oscEnvelope = Math.exp(-normalized / 0.3);
+      const oscPart = Math.sin(phase) * oscEnvelope * 0.25;
+      // Noise burst for impact texture, ~60ms, lowpass ~400Hz
+      let noisePart = 0;
+      if (normalized < 0.4) {
+        const noiseEnvelope = Math.exp(-normalized / 0.1);
+        noisePart = (Math.random() * 2 - 1) * noiseEnvelope * 0.08;
+      }
+      data[i] = oscPart + noisePart;
+    }
+    bufferCache.set('land', buffer);
+  }
+}
+
+/**
  * Initialize a sound pool for a given type.
  * Must be called after setupAudioListener so the AudioListener exists.
  */
@@ -85,14 +234,26 @@ function initPool(type: SoundPoolType): void {
   const pool = soundPools[type];
   if (pool.length > 0) return; // already initialized
 
-  for (let i = 0; i < POOL_SIZE; i++) {
-    const posAudio = new THREE.PositionalAudio(listener as unknown as THREE.AudioListener);
-    posAudio.setRefDistance(AUDIO_REF_DISTANCE);
-    posAudio.setMaxDistance(AUDIO_MAX_DISTANCE);
-    posAudio.setRolloffFactor(AUDIO_ROLLOFF_FACTOR);
-    posAudio.setDistanceModel('inverse');
+  // First node's AudioContext gives us the sample rate for buffer generation
+  const posAudio = new THREE.PositionalAudio(listener as unknown as THREE.AudioListener);
+  const ctx = posAudio.context;
+  posAudio.setRefDistance(AUDIO_REF_DISTANCE);
+  posAudio.setMaxDistance(AUDIO_MAX_DISTANCE);
+  posAudio.setRolloffFactor(AUDIO_ROLLOFF_FACTOR);
+  posAudio.setDistanceModel('inverse');
+  pool.push({ audio: posAudio, inUse: false });
 
-    pool.push({ audio: posAudio, inUse: false });
+  // Generate all sound buffers once using the sample rate from the AudioContext
+  generateAudioBuffers(ctx);
+
+  // Fill remaining pool slots
+  for (let i = 1; i < POOL_SIZE; i++) {
+    const node = new THREE.PositionalAudio(listener as unknown as THREE.AudioListener);
+    node.setRefDistance(AUDIO_REF_DISTANCE);
+    node.setMaxDistance(AUDIO_MAX_DISTANCE);
+    node.setRolloffFactor(AUDIO_ROLLOFF_FACTOR);
+    node.setDistanceModel('inverse');
+    pool.push({ audio: node, inUse: false });
   }
 }
 
@@ -145,13 +306,12 @@ export function setupAudioScene(scene: THREE.Scene): void {
 }
 
 /**
- * Play a synthesized sound through a PositionalAudio node at the given world position.
+ * Play a pre-cached sound through a PositionalAudio node at the given world position.
  */
 function playPositional(
   type: SoundPoolType,
   position: { x: number; y: number; z: number },
   volume: number,
-  onSound: (ctx: AudioContext | OfflineAudioContext, dest: AudioNode, time: number) => void,
 ): void {
   const audio = borrowNode(type);
   if (!audio) return;
@@ -160,58 +320,28 @@ function playPositional(
   audio.position.set(position.x, position.y, position.z);
   audio.setVolume(volume);
 
-  // Synthesize into a buffer and set it on the PositionalAudio
-  const ctx = audio.context;
-  const duration = type === 'reload' ? 0.5 : 0.2;
-  const sampleCount = Math.floor(ctx.sampleRate * duration);
-  const buffer = ctx.createBuffer(1, sampleCount, ctx.sampleRate);
-  const channel = buffer.getChannelData(0);
-
-  // Use a temporary gain to shape the sound into our buffer
-  const offline = new OfflineAudioContext(1, sampleCount, ctx.sampleRate);
-  const dest = offline.destination;
-  onSound(offline, dest, 0);
-  offline.startRendering().then(rendered => {
-    const renderedData = rendered.getChannelData(0);
-    for (let i = 0; i < channel.length && i < renderedData.length; i++) {
-      channel[i] = renderedData[i];
-    }
+  // Use pre-generated buffer from cache
+  const buffer = bufferCache.get(type as BufferCacheKey);
+  if (buffer) {
     audio.setBuffer(buffer);
     audio.play();
-  });
+  }
 
   // Auto-release after sound duration
+  const duration = getSoundDuration(type);
   setTimeout(() => {
-    try { audio.stop(); } catch {}
+    try { audio.stop(); } catch { /* ignore */ }
     releaseNode(type, audio);
   }, duration * 1000 + 50);
 }
 
-// ─── Noise buffer cache (shared across calls) ────────────────────────────────
-
-const noiseBufferCache = new Map<number, AudioBuffer>();
-
-function getNoiseBuffer(ctx: AudioContext | OfflineAudioContext, duration: number): AudioBuffer {
-  const key = Math.round(duration * 1000); // round to nearest ms as cache key
-  if (noiseBufferCache.has(key)) {
-    return noiseBufferCache.get(key)!;
-  }
-  const sampleCount = ctx.sampleRate * duration;
-  const buffer = ctx.createBuffer(1, sampleCount, ctx.sampleRate);
-  const data = buffer.getChannelData(0);
-  for (let i = 0; i < sampleCount; i++) {
-    data[i] = Math.random() * 2 - 1;
-  }
-  noiseBufferCache.set(key, buffer);
-  return buffer;
-}
-
 // ─── Sound synthesis primitives ──────────────────────────────────────────────
+// (Used only for local/mono sounds — still need live Web Audio nodes for those)
 
 /**
  * Gunshot synthesis: filtered noise burst with exponential decay.
  */
-function synthesizeGunshot(ctx: AudioContext | OfflineAudioContext, output: AudioNode, time: number, volume: number = 0.4): void {
+function synthesizeGunshot(ctx: AudioContext, output: AudioNode, time: number, volume: number = 0.4): void {
   const bufferSize = ctx.sampleRate * 0.08;
   const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
   const data = buffer.getChannelData(0);
@@ -238,7 +368,7 @@ function synthesizeGunshot(ctx: AudioContext | OfflineAudioContext, output: Audi
 /**
  * Click synthesis: short square oscillator burst.
  */
-function synthesizeClick(ctx: AudioContext | OfflineAudioContext, output: AudioNode, time: number, freq: number, vol: number): void {
+function synthesizeClick(ctx: AudioContext, output: AudioNode, time: number, freq: number, vol: number): void {
   const osc = ctx.createOscillator();
   osc.type = 'square';
   osc.frequency.setValueAtTime(freq, time);
@@ -255,7 +385,7 @@ function synthesizeClick(ctx: AudioContext | OfflineAudioContext, output: AudioN
 /**
  * Footstep synthesis: short, low-frequency noise burst.
  */
-function synthesizeFootstep(ctx: AudioContext | OfflineAudioContext, output: AudioNode, time: number, volume: number = 0.15): void {
+function synthesizeFootstep(ctx: AudioContext, output: AudioNode, time: number, volume: number = 0.15): void {
   const bufferSize = ctx.sampleRate * 0.05;
   const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
   const data = buffer.getChannelData(0);
@@ -281,7 +411,7 @@ function synthesizeFootstep(ctx: AudioContext | OfflineAudioContext, output: Aud
 /**
  * Jump synthesis: short rising tone.
  */
-function synthesizeJump(ctx: AudioContext | OfflineAudioContext, output: AudioNode, time: number, volume: number = 0.1): void {
+function synthesizeJump(ctx: AudioContext, output: AudioNode, time: number, volume: number = 0.1): void {
   const osc = ctx.createOscillator();
   osc.type = 'sine';
   osc.frequency.setValueAtTime(300, time);
@@ -299,7 +429,7 @@ function synthesizeJump(ctx: AudioContext | OfflineAudioContext, output: AudioNo
 /**
  * Land synthesis: low-frequency thud.
  */
-function synthesizeLand(ctx: AudioContext | OfflineAudioContext, output: AudioNode, time: number, volume: number = 0.2): void {
+function synthesizeLand(ctx: AudioContext, output: AudioNode, time: number, volume: number = 0.2): void {
   // Low oscillator thud
   const osc = ctx.createOscillator();
   osc.type = 'sine';
@@ -436,9 +566,7 @@ export function playKill(): void {
  */
 export function playShootRemote(position: { x: number; y: number; z: number }): void {
   if (!audioListener) return;
-  playPositional('shoot', position, 0.4, (ctx, output, time) => {
-    synthesizeGunshot(ctx, output, time, 1.0);
-  });
+  playPositional('shoot', position, 0.4);
 }
 
 /**
@@ -446,37 +574,28 @@ export function playShootRemote(position: { x: number; y: number; z: number }): 
  */
 export function playReloadRemote(position: { x: number; y: number; z: number }): void {
   if (!audioListener) return;
-  playPositional('reload', position, 0.2, (ctx, output, time) => {
-    synthesizeClick(ctx, output, time, 800, 0.15);
-    synthesizeClick(ctx, output, time + 0.25, 1200, 0.15);
-  });
+  playPositional('reload', position, 0.2);
 }
 
 /**
  * Play a footstep sound at a remote player position (positional audio).
  */
 export function playFootstepRemote(position: { x: number; y: number; z: number }): void {
-  playPositional('footstep', position, 0.15, (ctx, output, time) => {
-    synthesizeFootstep(ctx, output, time, 1.0);
-  });
+  playPositional('footstep', position, 0.15);
 }
 
 /**
  * Play a jump sound at a remote player position (positional audio).
  */
 export function playJumpRemote(position: { x: number; y: number; z: number }): void {
-  playPositional('jump', position, 0.1, (ctx, output, time) => {
-    synthesizeJump(ctx, output, time, 1.0);
-  });
+  playPositional('jump', position, 0.1);
 }
 
 /**
  * Play a land/thud sound at a remote player position (positional audio).
  */
 export function playLandRemote(position: { x: number; y: number; z: number }): void {
-  playPositional('land', position, 0.2, (ctx, output, time) => {
-    synthesizeLand(ctx, output, time, 1.0);
-  });
+  playPositional('land', position, 0.2);
 }
 
 // ─── Backward compatibility aliases ──────────────────────────────────────────

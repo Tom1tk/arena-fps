@@ -15,9 +15,9 @@ export const SPAWN_PROTECTION_S = 0;
 // --- Movement (tune after gameplay is functional) ---
 export const MOVE_SPEED = 7.0;
 export const CROUCH_SPEED = 3.5;
-export const GROUND_ACCEL = 60;
-export const GROUND_FRICTION = 50;
-export const AIR_ACCEL = 12;
+export const GROUND_ACCEL = 120;
+export const GROUND_FRICTION = 20;
+export const AIR_ACCEL = 40;
 export const JUMP_VELOCITY = 6.0;
 export const GRAVITY = 20;
 export const MAX_SLOPE_WALKABLE_DEG = 50;
@@ -25,8 +25,8 @@ export const MAX_SLOPE_WALKABLE_DEG = 50;
 // --- Weapon (pistol) ---
 export const MAG_SIZE = 15;
 export const RESERVE_AMMO = Infinity;
-export const DAMAGE_BODY = 22;
-export const DAMAGE_HEAD = 66; // 3× headshot multiplier
+export const DAMAGE_BODY = 34;
+export const DAMAGE_HEAD = 100; // instant-kill headshot
 export const FIRE_MODE = 'semi' as const;
 export const FIRE_RATE_RPM = 360; // ~6/s cap
 export const RELOAD_TIME_S = 1.6;

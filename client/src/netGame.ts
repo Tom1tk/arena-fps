@@ -283,7 +283,7 @@ export class NetGame {
    *
    * §4.6 — Interpolate between bracketing snapshots at viewTick.
    */
-  getInterpolatedPos(entity: EntityState): THREE.Vector3 | null {
+  getInterpolatedPos(entity: EntityState, out?: THREE.Vector3): THREE.Vector3 | null {
     const vt = this.viewTick;
     const hist = entity.history;
     if (hist.length < 2) {
@@ -310,11 +310,14 @@ export class NetGame {
       return next.pos;
     }
 
-    // Interpolate
+    // Interpolate into reusable output vector to avoid GC pressure
     const range = next.tick - prev.tick;
     const t = range > 0 ? (vt - prev.tick) / range : 1;
-    const pos = new THREE.Vector3().lerpVectors(prev.pos, next.pos, t);
-    return pos;
+    if (out) {
+      out.lerpVectors(prev.pos, next.pos, t);
+      return out;
+    }
+    return new THREE.Vector3().lerpVectors(prev.pos, next.pos, t);
   }
 
   /**

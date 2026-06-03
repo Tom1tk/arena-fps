@@ -1184,14 +1184,12 @@ function renderLoop(now: number): void {
     // 11. Update remote players with interpolation (§4.6)
     if (remotePlayers && netGame) {
       const remotes = netGame.getRemotes();
-      const remoteEntities: typeof remotes = remotes.map(e => {
-        const interpPos = netGame!.getInterpolatedPos(e);
-        return {
-          ...e,
-          pos: interpPos || e.pos,
-        };
-      });
-      remotePlayers.update(remoteEntities, camera);
+      const interpVec = new THREE.Vector3();
+      for (const e of remotes) {
+        const interpPos = netGame.getInterpolatedPos(e, interpVec);
+        e.pos = interpPos || e.pos;
+      }
+      remotePlayers.update(remotes, camera);
     }
 
     // 12. Process server events — only once per new tick to avoid re-firing
