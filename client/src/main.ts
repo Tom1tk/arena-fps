@@ -1201,6 +1201,8 @@ function renderLoop(now: number): void {
     }
     scoreboardEl.innerHTML = sbText;
 
+    // --- Render ---
+    renderer.render(scene, camera);
     return; // Skip the practice-mode simulation below
   }
 
