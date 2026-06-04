@@ -140,6 +140,10 @@ export class ViewModel {
   }
 
   dispose(): void {
+    // Remove from camera parent
+    if (this.group.parent) {
+      this.group.parent.remove(this.group);
+    }
     this.gunMesh.traverse((obj) => {
       if (obj instanceof THREE.Mesh) {
         obj.geometry.dispose();

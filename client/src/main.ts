@@ -1404,6 +1404,17 @@ function renderLoop(now: number): void {
     simAccum -= TICK_DT;
   }
 
+  // --- Update dummy targets (respawn timer, HP label, bot AI) ---
+  for (const t of dummyTargets) {
+    const dmg = t.update(frameDt, { x: player.pos.x, y: player.pos.y, z: player.pos.z });
+    if (dmg > 0 && !isDead) {
+      hp = Math.max(0, hp - dmg);
+      if (hp <= 0) {
+        onPlayerDeath('Bot', false);
+      }
+    }
+  }
+
   // --- Render interpolation ---
   const lerpT = clamp(simAccum / TICK_DT, 0, 1);
   lerpPos(renderPos, prevPos, player.pos, lerpT);
