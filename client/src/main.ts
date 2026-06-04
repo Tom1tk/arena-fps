@@ -110,6 +110,21 @@ function hideAllSubMenus(): void {
 import { NetClient } from './netClient';
 const netClient = new NetClient();
 
+// Cleanly leave the server when the window or tab is closing (desktop app or
+// browser). pagehide is the reliable event for this; we send a best-effort
+// leave + close. The server also detects the dropped socket via heartbeat as a
+// backstop, so this only needs to be best-effort.
+window.addEventListener('pagehide', () => {
+  try {
+    if (netClient.getState().phase !== 'disconnected') {
+      netClient.leave();
+      netClient.disconnect();
+    }
+  } catch {
+    // ignore — page is going away
+  }
+});
+
 // Lobby UI DOM refs
 const lobbyCodeDisplay = document.getElementById('lobby-code-display')!;
 const lobbyRosterBody = document.getElementById('lobby-roster-body')!;
