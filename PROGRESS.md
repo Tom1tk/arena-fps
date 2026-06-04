@@ -167,3 +167,21 @@
 
 ## M8 — Audio, Feel & Hardening *(blocked until M7 DoD met)*
 - [ ] Directional audio, viewmodel polish, perf pass, balance tuning
+
+---
+
+## Code Review Fixes (commit `42eb4a5`)
+
+All 7 items from `finished-code-review-fixes.md` implemented and verified:
+
+| # | Fix | Status |
+|---|---|---|
+| 1 | Server post-match → lobby flow (single transition, correct `left` flag, `else-if` structure) | ✅ |
+| 2 | Client return-to-lobby stays connected, shows lobby panel (not title menu) | ✅ |
+| 3 | Manual verification (pending user testing) | ⏳ |
+| 4 | Remote players no longer vanish on death (`getRemotes` includes dead, renderer hides via `visible`) | ✅ |
+| 5 | `grounded` sent in snapshot `flags` bit 1 instead of client Y-height guess | ✅ |
+| 6 | Noisy per-event debug logs removed (`addPlayer`, `Match start`) | ✅ |
+| 7 | `WORLD_BOUNDS` dead ternary cleaned up, defined once from `ARENA_HALF` | ✅ |
+
+Build hash: `BGbXwIYw.js`. Service restarted and healthy.

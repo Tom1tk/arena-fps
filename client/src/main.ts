@@ -984,8 +984,12 @@ function initGame(networked: boolean = false): void {
   });
 
   // Init viewmodel
-  if (viewmodel) viewmodel.dispose();
+  viewmodel?.dispose();
+  viewmodel = null;
   viewmodel = new ViewModel(scene, camera);
+
+  // Reset camera rotation (menu camera's lookAt leaves stale quaternion)
+  camera.rotation.set(0, 0, 0);
 
   if (networkedMode) {
     // Networked mode: server authoritative
