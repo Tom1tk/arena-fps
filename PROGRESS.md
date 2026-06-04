@@ -192,13 +192,18 @@ Build hash: `BGbXwIYw.js`. Service restarted and healthy.
   when the window/tab closes (desktop app or browser). Best-effort, no async.
 - Server detects dropped connections via heartbeat as a backstop.
 
-## Desktop Build Workflow (commit `fb4e1d6`)
+## Desktop Build Workflow (commit `877014d`)
 
 - `.github/workflows/build-desktop.yml` — Pake thin client targeting
   https://fps.endless777.online, 1280×720, no borderless/transparent flags.
 - Triggers: manual dispatch or `vX.Y.Z` tag push.
-- Produces `ArenaFPS-Windows` artifact (.exe/.msi) on a Windows runner.
-- On tag push, attaches installer to GitHub Release automatically.
-- Code signing intentionally skipped (unsigned → Windows SmartScreen warning).
-- **Human action required:** run "Build Desktop App" workflow from GitHub Actions tab,
-  then smoke-test pointer-lock in the resulting app.
+- Finds the raw portable Tauri binary (`ArenaFPS.exe`) from the release
+  folder — a single file, no installer required.
+- Requires system WebView2 runtime (present on Win10/11 by default).
+- Produces `ArenaFPS-portable` artifact (.exe). Attaches to GitHub Release
+  on tag push automatically.
+- Code signing intentionally skipped (unsigned portable .exe → Windows
+  SmartScreen/Defender warning — click through with "More info" → "Run anyway").
+- **Human action required:** check the "Locate the portable executable" step log
+  to confirm the correct binary (~5–15 MB) was selected, then download and
+  smoke-test pointer-lock in the resulting app.
