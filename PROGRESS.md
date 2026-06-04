@@ -185,3 +185,20 @@ All 7 items from `finished-code-review-fixes.md` implemented and verified:
 | 7 | `WORLD_BOUNDS` dead ternary cleaned up, defined once from `ARENA_HALF` | ✅ |
 
 Build hash: `BGbXwIYw.js`. Service restarted and healthy.
+
+## Graceful Disconnect (commit `fb4e1d6`)
+
+- `pagehide` listener added to client: calls `netClient.leave()` + `netClient.disconnect()`
+  when the window/tab closes (desktop app or browser). Best-effort, no async.
+- Server detects dropped connections via heartbeat as a backstop.
+
+## Desktop Build Workflow (commit `fb4e1d6`)
+
+- `.github/workflows/build-desktop.yml` — Pake thin client targeting
+  https://fps.endless777.online, 1280×720, no borderless/transparent flags.
+- Triggers: manual dispatch or `vX.Y.Z` tag push.
+- Produces `ArenaFPS-Windows` artifact (.exe/.msi) on a Windows runner.
+- On tag push, attaches installer to GitHub Release automatically.
+- Code signing intentionally skipped (unsigned → Windows SmartScreen warning).
+- **Human action required:** run "Build Desktop App" workflow from GitHub Actions tab,
+  then smoke-test pointer-lock in the resulting app.
