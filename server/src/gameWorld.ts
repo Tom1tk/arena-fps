@@ -209,7 +209,7 @@ export class GameWorld {
   /**
    * Helper: process a single input for a player (shared by drain + repeat-last).
    */
-  private processSingleInput(p: ServerPlayer, input: InputFrame, dt: number, otherPlayersList: Array<{ x: number; y: number; z: number; height: number }>): void {
+  private processSingleInput(p: ServerPlayer, input: InputFrame, dt: number, allPlayers: ServerPlayer[]): void {
     // --- Reload handling ---
     if (p.reloading) {
       p.reloadTimer -= dt;
@@ -246,11 +246,11 @@ export class GameWorld {
     }
 
     // --- Step movement ---
+    // M4: Build per-player "others" list excluding self by id, not position
     const myId = p.id;
-    const others = otherPlayersList.filter(o => {
-      const op = this.players.get(myId);
-      return !(Math.abs(o.x - op!.sim.pos.x) < 1 && Math.abs(o.z - op!.sim.pos.z) < 1);
-    });
+    const others = allPlayers
+      .filter(q => q.id !== myId)
+      .map(q => ({ x: q.sim.pos.x, y: 0, z: q.sim.pos.z, height: q.sim.eyeHeight }));
     playerStep(p.sim, input, dt, WORLD_BOUNDS, OBSTACLES, others);
 
     // Footstep events
@@ -287,13 +287,7 @@ export class GameWorld {
     this.events = [];
 
     // === Phase 1: Drain inputs & Step movement ===
-    // Build other-players list for solid-no-push collision (§4.5)
     const allPlayers = [...this.players.values()];
-    const otherPlayersList: Array<{ x: number; y: number; z: number; height: number }> =
-      allPlayers.map(p => ({
-        x: p.sim.pos.x, y: 0, z: p.sim.pos.z,
-        height: p.sim.eyeHeight,
-      }));
 
     for (const p of this.players.values()) {
       if (!p.connected) continue;
@@ -332,7 +326,7 @@ export class GameWorld {
       let inputsProcessed = 0;
       if (newInputs.length > 0) {
         const { seq, input: drainInput } = newInputs[0];
-        this.processSingleInput(p, drainInput, dt, otherPlayersList);
+        this.processSingleInput(p, drainInput, dt, allPlayers);
         p.inputBuffer.delete(seq);
         p.lastInputSeq = seq;
         p.lastIntent = drainInput;
@@ -346,7 +340,7 @@ export class GameWorld {
       // No new inputs processed — repeat last intent (clamped to ~10 ticks = 333ms)
       if (inputsProcessed === 0) {
         if (p.lastIntent && p.intentRepeatTicks < 10) {
-          this.processSingleInput(p, p.lastIntent, dt, otherPlayersList);
+          this.processSingleInput(p, p.lastIntent, dt, allPlayers);
           p.intentRepeatTicks++;
         } else {
           p.intentRepeatTicks = 0;
