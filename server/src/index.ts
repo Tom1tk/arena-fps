@@ -154,7 +154,28 @@ wss.on('connection', (ws: WebSocket) => {
   });
 });
 
+/**
+ * Sanitise client input fields to prevent NaN/Infinity corruption.
+ * All values are clamped to safe ranges; non-finite numbers become defaults.
+ */
+function sanitizeInput(m: any): InputFrame {
+  const num = (v: any, lo: number, hi: number, dflt = 0): number => {
+    const n = Number(v);
+    return Number.isFinite(n) ? Math.max(lo, Math.min(hi, n)) : dflt;
+  };
+  return {
+    seq:      num(m.seq, 0, Number.MAX_SAFE_INTEGER),
+    viewTick: num(m.viewTick, 0, Number.MAX_SAFE_INTEGER),
+    moveX:    num(m.moveX, -1, 1),
+    moveZ:    num(m.moveZ, -1, 1),
+    yaw:      num(m.yaw, -Math.PI * 4, Math.PI * 4),
+    pitch:    num(m.pitch, -Math.PI / 2, Math.PI / 2),
+    buttons:  (m.buttons | 0) & 0b1111, // only the 4 defined ButtonFlags bits
+  };
+}
+
 function handleMessage(ws: WebSocket, msg: any): void {
+  if (typeof msg.type !== 'string') return;
   switch (msg.type) {
     case 'create': {
       // Host creates a room
@@ -272,29 +293,13 @@ function handleMessage(ws: WebSocket, msg: any): void {
       const world = pInfo.room.gameWorld;
       const player = [...world.players.values()].find(p => p.ws === ws);
       if (player) {
-        // Process primary input
-        const input: InputFrame = {
-          seq: msg.seq as number,
-          viewTick: msg.viewTick as number,
-          moveX: msg.moveX as number,
-          moveZ: msg.moveZ as number,
-          yaw: msg.yaw as number,
-          pitch: msg.pitch as number,
-          buttons: msg.buttons as number,
-        };
+        // Process primary input — sanitised to prevent NaN/Infinity
+        const input: InputFrame = sanitizeInput(msg);
         world.processInput(player.id, input);
         // Process redundant inputs
         if (msg.redundant && Array.isArray(msg.redundant)) {
           for (const r of msg.redundant) {
-            world.processInput(player.id, {
-              seq: r.seq as number,
-              viewTick: r.viewTick as number,
-              moveX: r.moveX as number,
-              moveZ: r.moveZ as number,
-              yaw: r.yaw as number,
-              pitch: r.pitch as number,
-              buttons: r.buttons as number,
-            });
+            world.processInput(player.id, sanitizeInput(r));
           }
         }
       }
