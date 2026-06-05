@@ -475,6 +475,43 @@ export class GameWorld {
   }
 
   /**
+   * Ray vs AABB using the slab method.
+   * Returns the distance to the first (front) face intersection, or null if no hit.
+   */
+  private rayAABB(
+    ox: number, oy: number, oz: number,
+    dx: number, dy: number, dz: number,
+    aabb: SimAABB,
+  ): number | null {
+    let tmin = 0;
+    let tmax = HITSCAN_MAX_RANGE;
+
+    const invDx = Math.abs(dx) > 1e-8 ? 1 / dx : (dx < 0 ? -1e8 : 1e8);
+    const invDy = Math.abs(dy) > 1e-8 ? 1 / dy : (dy < 0 ? -1e8 : 1e8);
+    const invDz = Math.abs(dz) > 1e-8 ? 1 / dz : (dz < 0 ? -1e8 : 1e8);
+
+    let t0 = (aabb.minX - ox) * invDx;
+    let t1 = (aabb.maxX - ox) * invDx;
+    if (t0 > t1) { const t = t0; t0 = t1; t1 = t; }
+
+    let t0y = (aabb.minY - oy) * invDy;
+    let t1y = (aabb.maxY - oy) * invDy;
+    if (t0y > t1y) { const t = t0y; t0y = t1y; t1y = t; }
+
+    let t0z = (aabb.minZ - oz) * invDz;
+    let t1z = (aabb.maxZ - oz) * invDz;
+    if (t0z > t1z) { const t = t0z; t0z = t1z; t1z = t; }
+
+    tmin = t0 > tmin ? t0 : (t0y > tmin ? t0y : t0z);
+    tmax = t1 < tmax ? t1 : (t1y < tmax ? t1y : t1z);
+
+    if (tmin <= tmax && tmax >= 0) {
+      return tmin >= 0 ? tmin : tmax;
+    }
+    return null;
+  }
+
+  /**
    * Lag-compensated hitscan (§4.6).
    * Rewinds targets to the shooter's viewTick for fair hit check.
    */
@@ -523,7 +560,17 @@ export class GameWorld {
       }
     }
 
-    if (hitPlayer) {
+    // --- Occlusion: check if any obstacle blocks the shot ---
+    let wallDist = maxRange;
+    for (const obs of OBSTACLES) {
+      const w = this.rayAABB(origin.x, origin.y, origin.z, dx, dy, dz, obs);
+      if (w !== null && w < wallDist) {
+        wallDist = w;
+      }
+    }
+
+    // Only register hit if the entity is closer than any wall
+    if (hitPlayer && closest < wallDist) {
       const dmg = head ? DAMAGE_HEAD : DAMAGE_BODY;
       hitPlayer.hp -= dmg;
       this.events.push({ type: 'Hit', by: shooter.id, target: hitPlayer.id, dmg, head });
@@ -534,7 +581,7 @@ export class GameWorld {
         shooter.kills++;
         this.events.push({ type: 'Kill', killer: shooter.id, victim: hitPlayer.id });
       }
-    } else if (hitBot) {
+    } else if (hitBot && closest < wallDist) {
       const dmg = head ? DAMAGE_HEAD : DAMAGE_BODY;
       hitBot.hp -= dmg;
       this.events.push({ type: 'Hit', by: shooter.id, target: hitBot.id, dmg, head });
