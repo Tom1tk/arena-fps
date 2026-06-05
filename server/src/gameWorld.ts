@@ -14,7 +14,7 @@ import {
   RESPAWN_DELAY_S, PLAYER_EYE_HEIGHT, ARENA_HALF, HITSCAN_MAX_RANGE,
   SPAWN_POSITIONS, LAGCOMP_HISTORY_TICKS, INPUT_BUFFER_MAX,
   MAX_PLAYERS, KILL_GOAL, RELOAD_TIME_S, FIRE_RATE_RPM,
-  MAX_INPUTS_PER_TICK,
+  MAX_INPUTS_PER_TICK, HITBOX_BODY_RADIUS, HITBOX_HEAD_RADIUS, HITBOX_HEAD_OFFSET,
 } from '../../shared/constants.js';
 import { OBSTACLES as SHARED_OBSTACLES } from '../../shared/constants.js';
 import { playerStep, type PlayerSim } from '../../shared/simulation/step.js';
@@ -475,6 +475,77 @@ export class GameWorld {
   }
 
   /**
+   * Ray vs hitbox: head sphere first, then body cylinder.
+   * Returns { dist, head } for the nearest intersection, or null.
+   *
+   * Head: sphere of HITBOX_HEAD_RADIUS centred at (eyeX, eyeY + HITBOX_HEAD_OFFSET, eyeZ).
+   * Body: vertical cylinder of HITBOX_BODY_RADIUS from feetY up to eyeY + 0.2.
+   */
+  private raycastEntity(
+    origin: { x: number; y: number; z: number },
+    dx: number, dy: number, dz: number,
+    eyeX: number, eyeY: number, eyeZ: number,
+  ): { dist: number; head: boolean } | null {
+    const ox = origin.x, oy = origin.y, oz = origin.z;
+
+    // --- Head sphere ---
+    const headCY = eyeY + HITBOX_HEAD_OFFSET;
+    const hr = this.raySphereHead(ox, oy, oz, dx, dy, dz, eyeX, headCY, eyeZ, HITBOX_HEAD_RADIUS);
+    if (hr !== null) return { dist: hr, head: true };
+
+    // --- Body cylinder (ray vs infinite cylinder, then clamp Y) ---
+    const feetY = eyeY - PLAYER_EYE_HEIGHT;
+    const topY = eyeY + 0.2;
+    const cr = this.rayCylinder(ox, oy, oz, dx, dy, dz, eyeX, eyeZ, HITBOX_BODY_RADIUS, feetY, topY);
+    if (cr !== null) return { dist: cr, head: false };
+
+    return null;
+  }
+
+  /** Ray vs sphere. Returns distance to front face or null. */
+  private raySphereHead(
+    ox: number, oy: number, oz: number,
+    dx: number, dy: number, dz: number,
+    cx: number, cy: number, cz: number,
+    radius: number,
+  ): number | null {
+    const ex = ox - cx, ey = oy - cy, ez = oz - cz;
+    const b = ex * dx + ey * dy + ez * dz;
+    const c = ex * ex + ey * ey + ez * ez - radius * radius;
+    const disc = b * b - c;
+    if (disc < 0) return null;
+    const sqrtD = Math.sqrt(disc);
+    let t = -b - sqrtD;
+    if (t < 0) t = -b + sqrtD;
+    if (t < 0 || t > HITSCAN_MAX_RANGE) return null;
+    return t;
+  }
+
+  /** Ray vs vertical cylinder. Returns distance to front intersection or null. */
+  private rayCylinder(
+    ox: number, oy: number, oz: number,
+    dx: number, dy: number, dz: number,
+    cx: number, cz: number,
+    radius: number,
+    minY: number, maxY: number,
+  ): number | null {
+    const ex = ox - cx, ez = oz - cz;
+    const a = dx * dx + dz * dz;
+    const b = 2 * (ex * dx + ez * dz);
+    const c = ex * ex + ez * ez - radius * radius;
+    const disc = b * b - 4 * a * c;
+    if (disc < 0 || a < 1e-8) return null;
+    const sqrtD = Math.sqrt(disc);
+    let t = (-b - sqrtD) / (2 * a);
+    if (t < 0) t = (-b + sqrtD) / (2 * a);
+    if (t < 0 || t > HITSCAN_MAX_RANGE) return null;
+    // Check Y is within cylinder bounds
+    const hitY = oy + dy * t;
+    if (hitY >= minY && hitY <= maxY) return t;
+    return null;
+  }
+
+  /**
    * Ray vs AABB using the slab method.
    * Returns the distance to the first (front) face intersection, or null if no hit.
    */
@@ -521,9 +592,7 @@ export class GameWorld {
     shooter: ServerPlayer,
     viewTick: number,
   ): void {
-    const hitRadius = PLAYER_EYE_HEIGHT;
     const maxRange = HITSCAN_MAX_RANGE;
-
     let targetTick = viewTick;
     if (targetTick <= 0 || targetTick > this.serverTick) {
       targetTick = this.serverTick;
@@ -542,7 +611,7 @@ export class GameWorld {
       if (p === shooter) continue;
       const state = this.getPlayerStateAt(p.id, targetTick);
       if (!state || !state.alive) continue;
-      const result = this.raycastEntity(origin, dx, dy, dz, state, hitRadius);
+      const result = this.raycastEntity(origin, dx, dy, dz, state.x, state.y, state.z);
       if (result && result.dist < closest) {
         closest = result.dist;
         hitPlayer = p;
@@ -552,7 +621,7 @@ export class GameWorld {
 
     for (const b of this.bots) {
       if (!b.alive) continue;
-      const result = this.raycastEntity(origin, dx, dy, dz, b.sim.pos, hitRadius);
+      const result = this.raycastEntity(origin, dx, dy, dz, b.sim.pos.x, b.sim.pos.y, b.sim.pos.z);
       if (result && result.dist < closest) {
         closest = result.dist;
         hitBot = b;
@@ -593,30 +662,6 @@ export class GameWorld {
         this.events.push({ type: 'Kill', killer: shooter.id, victim: hitBot.id });
       }
     }
-  }
-
-  private raycastEntity(
-    origin: { x: number; y: number; z: number },
-    dx: number, dy: number, dz: number,
-    target: { x: number; y: number; z: number },
-    radius: number,
-  ): { dist: number; head: boolean } | null {
-    const sx = target.x - origin.x;
-    const sy = target.y - origin.y;
-    const sz = target.z - origin.z;
-    const dot = sx * dx + sy * dy + sz * dz;
-    if (dot < 0 || dot > HITSCAN_MAX_RANGE) return null;
-    const cx = origin.x + dx * dot;
-    const cy = origin.y + dy * dot;
-    const cz = origin.z + dz * dot;
-    const ex = cx - target.x;
-    const ey = cy - target.y;
-    const ez = cz - target.z;
-    const dist2 = ex * ex + ey * ey + ez * ez;
-    if (dist2 < radius * radius) {
-      return { dist: dot, head: cy > target.y + 0.2 };
-    }
-    return null;
   }
 
   private doBotAI(bot: ServerBot, dt: number): void {
