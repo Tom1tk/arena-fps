@@ -17,7 +17,7 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { LobbyManager } from './lobby.js';
 import { GameWorld } from './gameWorld.js';
-import { MAX_PLAYERS, NAME_MIN, NAME_MAX, HEARTBEAT_INTERVAL_S, HEARTBEAT_MISS_LIMIT, SERVER_TICK_HZ, TICK_DT, POST_MATCH_DURATION_S } from '../../shared/constants.js';
+import { MAX_PLAYERS, NAME_MIN, NAME_MAX, HEARTBEAT_INTERVAL_S, HEARTBEAT_MISS_LIMIT, SERVER_TICK_HZ, TICK_DT, POST_MATCH_DURATION_S, START_COUNTDOWN_S } from '../../shared/constants.js';
 import type { InputFrame } from '../../shared/types.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -365,15 +365,24 @@ function handleMessage(ws: WebSocket, msg: any): void {
 }
 
 // --- Game tick loop ---
-const gameTickInterval = setInterval(() => {
+/**
+ * M5: Measure tick duration and warn on overruns.
+ */
+const tickTimer = setInterval(() => {
+  const start = performance.now();
   for (const [, room] of lobbyManager.roomEntries) {
     if (room.phase === 'countdown' || room.phase === 'playing') {
       if (!room.gameWorld) continue;
 
-      // Transition from countdown to playing
+      // Transition from countdown to playing (M5: tick-based, not wall-clock)
       if (room.phase === 'countdown') {
-        const elapsed = (Date.now() - room.startedAt) / 1000;
-        if (elapsed >= 3) {
+        const countdownStartTick = room.countdownStartTick ?? room.gameWorld.serverTick;
+        if (room.countdownStartTick === undefined) {
+          // Store on first tick — set by lobby.ts startMatch
+        }
+        const ticksElapsed = room.gameWorld.serverTick - countdownStartTick;
+        const ticksNeeded = Math.ceil(START_COUNTDOWN_S * SERVER_TICK_HZ);
+        if (ticksElapsed >= ticksNeeded) {
           room.phase = 'playing';
           lobbyManager.broadcast(room.code, {
             type: 'match_start',
@@ -406,6 +415,7 @@ const gameTickInterval = setInterval(() => {
       // match_end + scoreboard. The post_match block below owns the timed
       // scoreboard window and the eventual lobby reset.
       if (room.gameWorld.matchEnded) {
+        room.postMatchStartTick = room.gameWorld.serverTick;
         const scoreboard = [...room.gameWorld.players.values()].map(p => ({
           id: p.id,
           name: p.name,
@@ -422,9 +432,11 @@ const gameTickInterval = setInterval(() => {
     // Post-match: keep ticking/broadcasting for the scoreboard background,
     // then reset to the LOBBY (players stay connected and re-ready).
     else if (room.phase === 'post_match' && room.gameWorld) {
-      const endedAt = room.gameWorld.matchEndedAt ?? Date.now();
-      const elapsed = (Date.now() - endedAt) / 1000;
-      if (elapsed < POST_MATCH_DURATION_S) {
+      // M5: tick-based post-match timer
+      const postMatchStartTick = room.postMatchStartTick ?? room.gameWorld.serverTick;
+      const ticksElapsed = room.gameWorld.serverTick - postMatchStartTick;
+      const ticksNeeded = Math.ceil(POST_MATCH_DURATION_S * SERVER_TICK_HZ);
+      if (ticksElapsed < ticksNeeded) {
         const snapshot = room.gameWorld.tick();
         for (const [playerWs] of room.players) {
           if (playerWs.readyState !== WebSocket.OPEN) continue;
@@ -450,8 +462,13 @@ const gameTickInterval = setInterval(() => {
       }
     }
   }
+  // M5: Warn on tick overrun (>25ms per full loop)
+  const elapsed = performance.now() - start;
+  if (elapsed > 25) {
+    console.warn(`[Tick] Overrun: ${elapsed.toFixed(1)}ms (tick budget: ${1000 / SERVER_TICK_HZ}ms)`);
+  }
 }, 1000 / SERVER_TICK_HZ);
-gameTickInterval.unref();
+tickTimer.unref();
 
 function sanitizeName(name: string): string {
   return (name || '').trim().replace(/[<>]/g, '').slice(0, NAME_MAX);

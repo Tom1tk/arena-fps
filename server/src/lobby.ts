@@ -21,6 +21,8 @@ export interface Room {
   players: Map<WebSocket, PlayerInfo>;
   phase: 'lobby' | 'readying' | 'countdown' | 'playing' | 'post_match';
   startedAt: number;
+  countdownStartTick?: number; // M5: tick-based countdown
+  postMatchStartTick?: number; // M5: tick-based post-match
   gameWorld: GameWorld | null;
 }
 
@@ -300,6 +302,8 @@ export class LobbyManager {
     const botCount = room.players.size >= 2 ? 0 : 5;
     room.gameWorld = new GameWorld(botCount);
     room.startedAt = Date.now();
+    // M5: Store the tick at which countdown began
+    room.countdownStartTick = room.gameWorld.serverTick;
 
     // Add all players to game world — UNIFY serverId with GameWorld id
     for (const [ws, info] of room.players) {
