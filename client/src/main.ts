@@ -587,38 +587,49 @@ window.addEventListener('resize', () => {
   renderer.setSize(w, h);
 });
 
-// --- Pause (Esc) ---
-document.addEventListener('keydown', (e) => {
-  if (e.code === 'Escape') {
-    if (tabOpen) {
-      tabScoreboard.style.display = 'none';
-      tabOpen = false;
-      if (inputSource) {
-        const el = document.querySelector('canvas') as HTMLCanvasElement;
-        if (document.pointerLockElement !== el) el.requestPointerLock();
-      }
-      return;
+// --- Pause toggle helper ---
+function togglePause(): void {
+  if (tabOpen) {
+    tabScoreboard.style.display = 'none';
+    tabOpen = false;
+    if (inputSource) {
+      const el = document.querySelector('canvas') as HTMLCanvasElement;
+      if (document.pointerLockElement !== el) el.requestPointerLock();
     }
-    if (!started) return;
-    // If settings overlay is open, close it back to pause
-    if (settingsOverlay.style.display === 'flex') {
-      settingsOverlay.style.display = 'none';
-      pauseOverlay.style.display = 'flex';
-      return;
-    }
-    if (!paused) {
-      // Pause: unlock cursor AND show menu simultaneously
-      paused = true;
-      pauseOverlay.style.display = 'flex';
-      document.exitPointerLock();
-      return;
-    }
+    return;
   }
-  // Resume on Escape when paused
-  if (e.code === 'Escape' && paused) {
+  if (!started) return;
+  // If settings overlay is open, close it back to pause
+  if (settingsOverlay.style.display === 'flex') {
+    settingsOverlay.style.display = 'none';
+    pauseOverlay.style.display = 'flex';
+    return;
+  }
+  if (!paused) {
+    paused = true;
+    pauseOverlay.style.display = 'flex';
+    document.exitPointerLock();
+  } else {
     paused = false;
     pauseOverlay.style.display = 'none';
     (document.querySelector('canvas') as HTMLCanvasElement)?.requestPointerLock();
+  }
+}
+
+// Detect pointer lock being lost by Escape key (browser eats the keydown event,
+// so we listen for the lock-change signal and pause in response).
+document.addEventListener('pointerlockchange', () => {
+  // Pointer lock was lost while game is running, not paused, not tab-open → Esc pressed
+  if (started && !paused && !tabOpen && !document.pointerLockElement) {
+    togglePause();
+  }
+});
+
+// --- Pause (Esc / P) ---
+document.addEventListener('keydown', (e) => {
+  if (e.code === 'Escape' || (e.code === 'KeyP' && !e.repeat)) {
+    togglePause();
+    return;
   }
   // Tab scoreboard
   if (e.code === 'Tab' && started && !paused) {
