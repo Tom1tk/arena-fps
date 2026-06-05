@@ -396,6 +396,8 @@ const tickTimer = setInterval(() => {
       const snapshot = room.gameWorld.tick();
 
       // Broadcast snapshot to all players with per-client ack
+      // TODO(L1): Replace JSON.stringify with binary serialization (MessagePack/flatbuffers)
+      // for production. At 30Hz × 20 players × 400B = ~240 KB/s, JSON overhead is significant.
       for (const [playerWs] of room.players) {
         if (playerWs.readyState !== WebSocket.OPEN) continue;
         // Get per-player ack seq
