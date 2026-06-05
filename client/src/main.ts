@@ -611,6 +611,7 @@ document.addEventListener('keydown', (e) => {
       paused = true;
       pauseOverlay.style.display = 'flex';
       document.exitPointerLock();
+      return;
     }
   }
   // Resume on Escape when paused
