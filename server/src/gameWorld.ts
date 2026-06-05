@@ -177,6 +177,13 @@ export class GameWorld {
     this.players.delete(id);
   }
 
+  /** Clear all state when the game world is disposed (M2). */
+  dispose(): void {
+    this.players.clear();
+    this.bots = [];
+    this.events = [];
+  }
+
   /**
    * Accept input from a client. Stores in per-player buffer for
    * §4.3 drain processing. Handles redundancy (same seq ignored).

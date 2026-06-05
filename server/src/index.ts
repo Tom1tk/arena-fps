@@ -175,6 +175,11 @@ wss.on('connection', (ws: WebSocket, req: any) => {
         for (const player of result.room.gameWorld.players.values()) {
           if (player.ws === ws) {
             player.connected = false;
+            // M2: Schedule removal after grace period (10s) for reconnect
+            const playerId = player.id;
+            setTimeout(() => {
+              result.room!.gameWorld?.removePlayer(playerId);
+            }, 10000);
             break;
           }
         }
@@ -434,6 +439,7 @@ const gameTickInterval = setInterval(() => {
           }));
         }
       } else {
+        room.gameWorld?.dispose();
         room.gameWorld = null;
         for (const [, p] of room.players) p.ready = false;
         room.phase = 'lobby';
