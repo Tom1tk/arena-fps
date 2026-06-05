@@ -32,6 +32,7 @@ export const DAMAGE_BODY = 34;
 export const DAMAGE_HEAD = 100; // instant-kill headshot
 export const FIRE_MODE = 'semi' as const;
 export const FIRE_RATE_RPM = 360; // ~6/s cap
+export const BOT_FIRE_RATE_RPM = 300; // 5 shots/s for bots
 export const RELOAD_TIME_S = 1.6;
 export const HITSCAN_MAX_RANGE = 200;
 export const SPREAD_RAD = 0; // system present, pinpoint for now

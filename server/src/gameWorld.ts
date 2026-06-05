@@ -12,7 +12,7 @@ import {
   TICK_DT, PLAYER_MAX_HP, MAG_SIZE, DAMAGE_BODY, DAMAGE_HEAD,
   RESPAWN_DELAY_S, PLAYER_EYE_HEIGHT, ARENA_HALF, HITSCAN_MAX_RANGE,
   SPAWN_POSITIONS, LAGCOMP_HISTORY_TICKS, INPUT_BUFFER_MAX,
-  MAX_PLAYERS, KILL_GOAL, RELOAD_TIME_S, FIRE_RATE_RPM,
+  MAX_PLAYERS, KILL_GOAL, RELOAD_TIME_S, FIRE_RATE_RPM, BOT_FIRE_RATE_RPM,
   HITBOX_BODY_RADIUS, HITBOX_HEAD_RADIUS, HITBOX_HEAD_OFFSET,
 } from '../../shared/constants.js';
 import { OBSTACLES as SHARED_OBSTACLES } from '../../shared/constants.js';
@@ -685,10 +685,25 @@ export class GameWorld {
         bot.moveTimer = 1 + Math.random() * 2;
       }
       bot.shootTimer -= dt;
-      if (nearestDist2 < 400 && bot.shootTimer <= 0) {
-        bot.shootTimer = 0.5 + Math.random() * 0.5;
-        buttons |= 4;
-        this.doBotShoot(bot, nearest);
+      // M7: only shoot if target is visible (line-of-sight check)
+      const dist = Math.sqrt(nearestDist2);
+      if (dist < HITSCAN_MAX_RANGE && bot.shootTimer <= 0) {
+        // Check occlusion: ray from bot eye to nearest player eye
+        const bdx = nearest.sim.pos.x - bot.sim.pos.x;
+        const bdy = nearest.sim.pos.y - bot.sim.pos.y;
+        const bdz = nearest.sim.pos.z - bot.sim.pos.z;
+        let blocked = false;
+        for (const obs of OBSTACLES) {
+          if (this.rayAABB(bot.sim.pos.x, bot.sim.pos.y, bot.sim.pos.z, bdx, bdy, bdz, obs) !== null) {
+            blocked = true;
+            break;
+          }
+        }
+        if (!blocked) {
+          bot.shootTimer = 60 / BOT_FIRE_RATE_RPM; // fixed fire rate from constant
+          buttons |= 4;
+          this.doBotShoot(bot, nearest);
+        }
       }
     } else {
       bot.moveTimer -= dt;
