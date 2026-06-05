@@ -289,7 +289,12 @@ export class GameWorld {
     // === Phase 1: Drain inputs & Step movement ===
     const allPlayers = [...this.players.values()];
 
-    for (const p of this.players.values()) {
+    // M8: Sort players by id for deterministic round-robin shot resolution.
+    // Without this, simultaneous shots at the same tick resolve in Map insertion
+    // order (first connected wins), which is unfair.
+    const sortedPlayers = [...this.players.values()].sort((a, b) => a.id - b.id);
+
+    for (const p of sortedPlayers) {
       if (!p.connected) continue;
 
       if (!p.alive) {
