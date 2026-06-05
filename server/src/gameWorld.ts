@@ -58,7 +58,7 @@ export function allocatePlayerId(): number {
   return nextPlayerId++;
 }
 
-let nextBotId = 100;
+let nextBotId = 1_000_000; // M3: disjoint range from player IDs
 
 // --- Server Player ---
 
