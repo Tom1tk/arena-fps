@@ -3,7 +3,7 @@ import { GameWorld, allocatePlayerId } from './gameWorld.js';
 
 // --- Re-exported from constants ---
 export { MAX_PLAYERS, KILL_GOAL, POST_MATCH_DURATION_S, START_COUNTDOWN_S, LOBBY_CODE_LENGTH, NAME_MIN, NAME_MAX, HEARTBEAT_INTERVAL_S, HEARTBEAT_MISS_LIMIT } from '../../shared/constants.js';
-import { MAX_PLAYERS, LOBBY_CODE_LENGTH, HEARTBEAT_INTERVAL_S, HEARTBEAT_MISS_LIMIT } from '../../shared/constants.js';
+import { MAX_PLAYERS, LOBBY_CODE_LENGTH, HEARTBEAT_INTERVAL_S, HEARTBEAT_MISS_LIMIT, MAX_ROOMS } from '../../shared/constants.js';
 
 // --- Types ---
 
@@ -61,6 +61,11 @@ export class LobbyManager {
    * Create a new room. Returns the lobby code.
    */
   createRoom(ws: WebSocket, name: string): string {
+    // M1: Enforce room limit
+    if (this.rooms.size >= MAX_ROOMS) {
+      // Handled by returning empty string; caller sends error
+      return '';
+    }
     const code = this.generateUniqueCode();
     const room: Room = {
       code,

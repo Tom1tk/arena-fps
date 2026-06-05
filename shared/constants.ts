@@ -42,6 +42,7 @@ export const KILL_GOAL = 30;
 export const POST_MATCH_DURATION_S = 15;
 export const START_COUNTDOWN_S = 3;
 export const LOBBY_CODE_LENGTH = 5;
+export const MAX_ROOMS = 50;
 export const NAME_MIN = 3;
 export const NAME_MAX = 20;
 export const SPAWN_POINTS = 8;

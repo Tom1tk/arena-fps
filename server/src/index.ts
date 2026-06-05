@@ -76,6 +76,19 @@ const server = http.createServer((req, res) => {
 const wss = new WebSocketServer({ server });
 const lobbyManager = new LobbyManager();
 
+// M1: Connection/room limits (DoS protection)
+const MAX_CONNECTIONS = 200;
+const MAX_ROOMS = 50;
+const MAX_CONN_PER_IP = 8;
+const ipConnCount = new Map<string, number>();
+
+function getClientIp(req: any): string {
+  // Behind Cloudflare: use CF-Connecting-IP; otherwise use remoteAddress
+  const cfIp = req.headers?.['cf-connecting-ip'];
+  if (typeof cfIp === 'string') return cfIp;
+  return (req.socket?.remoteAddress as string) ?? 'unknown';
+}
+
 console.log(`[Server] Starting on port ${PORT}`);
 
 // --- Heartbeat timer ---
@@ -98,7 +111,23 @@ const heartbeatInterval = setInterval(() => {
 
 heartbeatInterval.unref(); // Don't keep process alive
 
-wss.on('connection', (ws: WebSocket) => {
+wss.on('connection', (ws: WebSocket, req: any) => {
+  // M1: Enforce connection limits
+  const ip = getClientIp(req);
+  const currentIpCount = ipConnCount.get(ip) ?? 0;
+
+  if (wss.clients.size >= MAX_CONNECTIONS) {
+    ws.close(1013, 'Server full');
+    return;
+  }
+  if (currentIpCount >= MAX_CONN_PER_IP) {
+    ws.close(1013, 'Too many connections from your IP');
+    return;
+  }
+
+  ipConnCount.set(ip, currentIpCount + 1);
+  (ws as any).__ip = ip; // store for close handler
+
   console.log(`[WS] Client connected (${wss.clients.size} total)`);
 
   // Initialize heartbeat timer
@@ -128,7 +157,16 @@ wss.on('connection', (ws: WebSocket) => {
     (ws as any).__hbTimer = 0;
   });
 
-  ws.on('close', (code: number, reason: Buffer) => {
+  ws.on('close', (code: number, _reason: Buffer) => {
+    // M1: Decrement per-IP counter
+    const closeIp = (ws as any).__ip as string;
+    const count = ipConnCount.get(closeIp);
+    if (count !== undefined && count > 1) {
+      ipConnCount.set(closeIp, count - 1);
+    } else if (count !== undefined) {
+      ipConnCount.delete(closeIp);
+    }
+
     console.log(`[WS] Client disconnected (code: ${code})`);
     const result = lobbyManager.leaveRoom(ws);
     if (result.room) {
@@ -191,6 +229,11 @@ function handleMessage(ws: WebSocket, msg: any): void {
         return;
       }
       const code = lobbyManager.createRoom(ws, name);
+      // M1: Reject if room limit reached (createRoom returns '' when full)
+      if (!code) {
+        ws.send(JSON.stringify({ type: 'error', message: 'Server full — too many rooms' }));
+        return;
+      }
       const playerInfo = lobbyManager.getPlayer(ws);
       ws.send(JSON.stringify({
         type: 'created',
