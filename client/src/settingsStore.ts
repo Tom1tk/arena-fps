@@ -40,7 +40,7 @@ export class SettingsStore {
       return {
         ...DEFAULTS,
         ...parsed,
-        sensitivity: clamp(parsed.sensitivity ?? DEFAULTS.sensitivity, 0.5, 20),
+        sensitivity: clamp(parsed.sensitivity ?? DEFAULTS.sensitivity, 0.1, 20),
         fov: clamp(parsed.fov ?? DEFAULTS.fov, 70, 110),
         crosshairSize: clamp(parsed.crosshairSize ?? DEFAULTS.crosshairSize, 4, 64),
       };

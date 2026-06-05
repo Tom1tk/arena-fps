@@ -114,7 +114,7 @@
     #pause-overlay {
       position: fixed; inset: 0; z-index: 300;
       display: none; flex-direction: column; align-items: center; justify-content: center;
-      background: rgba(0,0,0,0.75); color: #fff;
+      background: rgba(0,0,0,0.55); color: #fff;
     }
     #pause-overlay h2 { font-size: 2rem; margin-bottom: 1rem; }
     #pause-overlay button {
@@ -143,7 +143,7 @@
     #title-overlay {
       position: fixed; inset: 0; z-index: 400;
       display: flex; flex-direction: column; align-items: center; justify-content: center;
-      background: rgba(0,0,0,0.85); color: #fff;
+      background: rgba(0,0,0,0.65); color: #fff;
     }
     #title-overlay h1 { font-size: 3rem; margin-bottom: 0.5rem; letter-spacing: 0.1em; }
     #title-overlay p { color: #888; margin-bottom: 1rem; font-size: 1rem; }
@@ -296,8 +296,15 @@
       <div id="menu-settings-grid">
         <div>
           <label style="color:#aaa; font-size:12px;">Sensitivity</label><br>
-          <input id="menu-sensitivity" type="range" min="1" max="20" step="0.5" value="10"
-            style="width:180px;" />
+          <div style="display:flex; align-items:center; gap:6px; margin-top:4px;">
+            <input id="menu-sensitivity" type="range" min="0.1" max="20" step="0.1" value="10"
+              style="flex:1;" />
+            <input id="menu-sensitivity-input" type="number" min="0.1" max="20" step="0.1" value="10"
+              style="width:60px; padding:3px 6px; font-size:12px; font-family:monospace;
+              background:#222; color:#fff; border:1px solid #444; border-radius:4px; text-align:center;" />
+            <button id="menu-sensitivity-confirm" style="padding:3px 10px; font-size:12px;
+              border:none; border-radius:4px; background:#444; color:#fff; cursor:pointer;">✓</button>
+          </div>
           <span id="menu-sensitivity-val" style="color:#fff; font-size:13px; font-family:monospace;"></span>
         </div>
         <div>
@@ -371,14 +378,21 @@
 
   <!-- Settings overlay (in-game, via pause) -->
   <div id="settings-overlay" style="display:none; position:fixed; inset:0; z-index:310;
-       background:rgba(0,0,0,0.85); color:#fff; flex-direction:column; align-items:center;
+       background:rgba(0,0,0,0.65); color:#fff; flex-direction:column; align-items:center;
        justify-content:center; font-family:monospace;">
     <h2 style="margin-bottom:20px;">SETTINGS</h2>
     <div id="in-game-settings" style="display:grid; grid-template-columns:1fr 1fr; gap:16px; width:440px;">
       <div>
         <label style="color:#aaa; font-size:12px;">Sensitivity</label><br>
-        <input id="sg-sensitivity" type="range" min="1" max="20" step="0.5" value="10"
-          style="width:200px;" />
+        <div style="display:flex; align-items:center; gap:6px; margin-top:4px;">
+          <input id="sg-sensitivity" type="range" min="0.1" max="20" step="0.1" value="10"
+            style="flex:1; width:140px;" />
+          <input id="sg-sensitivity-input" type="number" min="0.1" max="20" step="0.1" value="10"
+            style="width:60px; padding:3px 6px; font-size:12px; font-family:monospace;
+            background:#222; color:#fff; border:1px solid #444; border-radius:4px; text-align:center;" />
+          <button id="sg-sensitivity-confirm" style="padding:3px 10px; font-size:12px;
+            border:none; border-radius:4px; background:#444; color:#fff; cursor:pointer;">✓</button>
+        </div>
         <span id="sg-sensitivity-val" style="color:#fff; font-size:13px;"></span>
       </div>
       <div>

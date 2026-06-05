@@ -337,6 +337,8 @@ if (savedName) {
 
 // --- Menu settings controls ---
 const menuSensitivity = document.getElementById('menu-sensitivity')! as HTMLInputElement;
+const menuSensitivityInput = document.getElementById('menu-sensitivity-input')! as HTMLInputElement;
+const menuSensitivityConfirm = document.getElementById('menu-sensitivity-confirm')!;
 const menuSensitivityVal = document.getElementById('menu-sensitivity-val')!;
 const menuFov = document.getElementById('menu-fov')! as HTMLInputElement;
 const menuFovVal = document.getElementById('menu-fov-val')!;
@@ -348,8 +350,10 @@ const menuGraphics = document.getElementById('menu-graphics')! as HTMLSelectElem
 // Sync menu controls with settings
 function syncMenuControls(): void {
   const s = settings.get();
-  (menuSensitivity as HTMLInputElement).value = String(s.sensitivity);
-  menuSensitivityVal.textContent = String(s.sensitivity);
+  const sensStr = String(s.sensitivity);
+  (menuSensitivity as HTMLInputElement).value = sensStr;
+  menuSensitivityInput.value = sensStr;
+  menuSensitivityVal.textContent = sensStr;
   (menuFov as HTMLInputElement).value = String(s.fov);
   menuFovVal.textContent = String(s.fov);
   (menuCrosshairType as HTMLSelectElement).value = s.crosshairType;
@@ -358,11 +362,28 @@ function syncMenuControls(): void {
   (menuGraphics as HTMLSelectElement).value = s.graphicsQuality;
 }
 
+// Apply sensitivity from a string value (used by both input+confirm and slider)
+function applyMenuSensitivity(val: string): void {
+  const s = parseFloat(val);
+  if (!isNaN(s) && s >= 0.1 && s <= 20) {
+    settings.set({ sensitivity: s });
+    menuSensitivity.value = s.toFixed(1);
+    menuSensitivityInput.value = s.toFixed(1);
+    menuSensitivityVal.textContent = s.toFixed(1);
+    if (inputSource) inputSource.setSensitivity(s);
+  }
+}
+
 // Menu control change handlers (apply live)
 menuSensitivity.addEventListener('input', () => {
-  settings.set({ sensitivity: parseFloat(menuSensitivity.value) });
-  menuSensitivityVal.textContent = menuSensitivity.value;
-  if (inputSource) inputSource.setSensitivity(settings.get().sensitivity);
+  applyMenuSensitivity(menuSensitivity.value);
+});
+// Text input: apply on confirm button click or Enter
+menuSensitivityConfirm.addEventListener('click', () => {
+  applyMenuSensitivity(menuSensitivityInput.value);
+});
+menuSensitivityInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') applyMenuSensitivity(menuSensitivityInput.value);
 });
 menuFov.addEventListener('input', () => {
   const fov = parseFloat(menuFov.value);
@@ -579,14 +600,24 @@ document.addEventListener('keydown', (e) => {
       return;
     }
     if (!started) return;
-    paused = !paused;
-    if (paused) {
+    // If settings overlay is open, close it back to pause
+    if (settingsOverlay.style.display === 'flex') {
+      settingsOverlay.style.display = 'none';
+      pauseOverlay.style.display = 'flex';
+      return;
+    }
+    if (!paused) {
+      // Pause: unlock cursor AND show menu simultaneously
+      paused = true;
       pauseOverlay.style.display = 'flex';
       document.exitPointerLock();
-    } else {
-      pauseOverlay.style.display = 'none';
-      (document.querySelector('canvas') as HTMLCanvasElement)?.requestPointerLock();
     }
+  }
+  // Resume on Escape when paused
+  if (e.code === 'Escape' && paused) {
+    paused = false;
+    pauseOverlay.style.display = 'none';
+    (document.querySelector('canvas') as HTMLCanvasElement)?.requestPointerLock();
   }
   // Tab scoreboard
   if (e.code === 'Tab' && started && !paused) {
@@ -617,8 +648,10 @@ settingsBtn.addEventListener('click', () => {
   settingsOverlay.style.display = 'flex';
   // Sync in-game settings controls
   const s = settings.get();
-  (sgSensitivity as HTMLInputElement).value = String(s.sensitivity);
-  sgSensitivityVal.textContent = String(s.sensitivity);
+  const sensStr = s.sensitivity.toFixed(1);
+  (sgSensitivity as HTMLInputElement).value = sensStr;
+  sgSensitivityInput.value = sensStr;
+  sgSensitivityVal.textContent = sensStr;
   (sgFov as HTMLInputElement).value = String(s.fov);
   sgFovVal.textContent = String(s.fov);
   (sgCrosshairType as HTMLSelectElement).value = s.crosshairType;
@@ -631,6 +664,8 @@ settingsBtn.addEventListener('click', () => {
 const settingsOverlay = document.getElementById('settings-overlay')!;
 const settingsCloseBtn = document.getElementById('settings-close-btn')!;
 const sgSensitivity = document.getElementById('sg-sensitivity')! as HTMLInputElement;
+const sgSensitivityInput = document.getElementById('sg-sensitivity-input')! as HTMLInputElement;
+const sgSensitivityConfirm = document.getElementById('sg-sensitivity-confirm')!;
 const sgSensitivityVal = document.getElementById('sg-sensitivity-val')!;
 const sgFov = document.getElementById('sg-fov')! as HTMLInputElement;
 const sgFovVal = document.getElementById('sg-fov-val')!;
@@ -640,11 +675,6 @@ const sgCrosshairSize = document.getElementById('sg-crosshair-size')! as HTMLInp
 const sgGraphics = document.getElementById('sg-graphics')! as HTMLSelectElement;
 
 // In-game setting change handlers
-sgSensitivity.addEventListener('input', () => {
-  settings.set({ sensitivity: parseFloat(sgSensitivity.value) });
-  sgSensitivityVal.textContent = sgSensitivity.value;
-  if (inputSource) inputSource.setSensitivity(settings.get().sensitivity);
-});
 sgFov.addEventListener('input', () => {
   const fov = parseFloat(sgFov.value);
   settings.set({ fov });
@@ -672,7 +702,30 @@ settingsCloseBtn.addEventListener('click', () => {
   settingsOverlay.style.display = 'none';
 });
 
+// In-game sensitivity text input + confirm
+function applyInGameSensitivity(val: string): void {
+  const s = parseFloat(val);
+  if (!isNaN(s) && s >= 0.1 && s <= 20) {
+    settings.set({ sensitivity: s });
+    sgSensitivity.value = s.toFixed(1);
+    sgSensitivityInput.value = s.toFixed(1);
+    sgSensitivityVal.textContent = s.toFixed(1);
+    if (inputSource) inputSource.setSensitivity(s);
+  }
+}
+sgSensitivity.addEventListener('input', () => {
+  applyInGameSensitivity(sgSensitivity.value);
+});
+sgSensitivityConfirm.addEventListener('click', () => {
+  applyInGameSensitivity(sgSensitivityInput.value);
+});
+sgSensitivityInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') applyInGameSensitivity(sgSensitivityInput.value);
+});
+
 leaveBtn.addEventListener('click', () => {
+  pauseOverlay.style.display = 'none';
+  settingsOverlay.style.display = 'none';
   endMatch();
   netClient.disconnect();
   hideAllSubMenus();
@@ -966,6 +1019,13 @@ function initGame(networked: boolean = false): void {
   inputSource = new KeyboardMouseSource(theCanvas);
   inputSource.setSensitivity(settings.get().sensitivity);
   inputSource.setAngles(0, 0);
+
+  // Hide all overlays that might linger
+  pauseOverlay.style.display = 'none';
+  settingsOverlay.style.display = 'none';
+  deathOverlay.style.display = 'none';
+  postMatchOverlay.style.display = 'none';
+  titleOverlay.style.display = 'none';
 
   // Reset player
   if (!networked) {
@@ -1415,6 +1475,9 @@ function renderLoop(now: number): void {
   } else {
     // Dead — countdown respawn
     playerRespawnTimer -= TICK_DT;
+    if (playerRespawnTimer <= 0) {
+      respawnPlayer(performance.now() / 1000);
+    }
   }
     simAccum -= TICK_DT;
   }
