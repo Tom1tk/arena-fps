@@ -1145,7 +1145,13 @@ function renderLoop(now: number): void {
   }
 
   // --- Paused / tab-focus: still render but don't simulate ---
-  if (paused || tabOpen) {
+  // In networked mode, only stop sending inputs — keep reconciling snapshots
+  // so we don't desync from the server while paused.
+  if (paused && !networkedMode) {
+    renderer.render(scene, camera);
+    return;
+  }
+  if (tabOpen) {
     renderer.render(scene, camera);
     return;
   }
@@ -1189,37 +1195,40 @@ function renderLoop(now: number): void {
     // --- Tick-locked accumulator (mirrors practice simAccum pattern) ---
     // Cap frameDt to avoid spiral-of-death; accumulate and process one tick per input.
     netAccum += Math.min(frameDt, 0.1);
-    while (netAccum >= TICK_DT) {
-      // 1. Poll input from keyboard/mouse source (once per tick, not per frame)
-      const tickInput = inputSource.poll();
+    // When paused, don't send inputs or step prediction — still process snapshots below.
+    if (!paused) {
+      while (netAccum >= TICK_DT) {
+        // 1. Poll input from keyboard/mouse source (once per tick, not per frame)
+        const tickInput = inputSource.poll();
 
-      // 2. Build InputFrame with proper viewTick for server lag compensation
-      inputSeq++;
-      const inputFrame: InputFrame = {
-        seq: inputSeq,
-        viewTick: netGame.viewTick,
-        moveX: tickInput.moveX,
-        moveZ: tickInput.moveZ,
-        yaw: inputSource.getYaw(),
-        pitch: inputSource.getPitch(),
-        buttons: tickInput.buttons,
-      };
+        // 2. Build InputFrame with proper viewTick for server lag compensation
+        inputSeq++;
+        const inputFrame: InputFrame = {
+          seq: inputSeq,
+          viewTick: netGame.viewTick,
+          moveX: tickInput.moveX,
+          moveZ: tickInput.moveZ,
+          yaw: inputSource.getYaw(),
+          pitch: inputSource.getPitch(),
+          buttons: tickInput.buttons,
+        };
 
-      // 3. Queue input for redundancy tracking
-      netGame.queueInput(inputFrame);
+        // 3. Queue input for redundancy tracking
+        netGame.queueInput(inputFrame);
 
-      // 4. Snapshot predicted position before stepping (for render interpolation)
-      prevPredictedPos.x = netGame.predictedSim.pos.x;
-      prevPredictedPos.y = netGame.predictedSim.pos.y;
-      prevPredictedPos.z = netGame.predictedSim.pos.z;
+        // 4. Snapshot predicted position before stepping (for render interpolation)
+        prevPredictedPos.x = netGame.predictedSim.pos.x;
+        prevPredictedPos.y = netGame.predictedSim.pos.y;
+        prevPredictedPos.z = netGame.predictedSim.pos.z;
 
-      // 5. Step local prediction for zero-latency movement (§4.4)
-      netGame.stepPrediction(inputFrame, TICK_DT);
+        // 5. Step local prediction for zero-latency movement (§4.4)
+        netGame.stepPrediction(inputFrame, TICK_DT);
 
-      // 6. Send to server (NetClient handles INPUT_REDUNDANCY)
-      netGame.net.sendInput(inputFrame);
+        // 6. Send to server (NetClient handles INPUT_REDUNDANCY)
+        netGame.net.sendInput(inputFrame);
 
-      netAccum -= TICK_DT;
+        netAccum -= TICK_DT;
+      }
     }
 
     // --- Post-tick: process server snapshots & render interpolation ---
