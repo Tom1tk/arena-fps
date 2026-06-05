@@ -324,7 +324,7 @@ describe('Bug Fix: Ordered drain, no loss within cap', () => {
     GameWorld = mod.GameWorld;
   });
 
-  it('buffer seq 1..5, tick once: all five applied in order', async () => {
+  it('buffer seq 1..5, tick once: only one applied (H4: 1 input/tick)', async () => {
     const gw = new GameWorld(0);
     const id = gw.addPlayer({ readyState: 1 } as any, 'P1');
 
@@ -338,10 +338,10 @@ describe('Bug Fix: Ordered drain, no loss within cap', () => {
     gw.tick();
 
     const p = gw.players.get(id);
-    // All 5 should be processed (lastInputSeq = 5)
-    expect(p.lastInputSeq).toBe(5);
-    // Buffer should be empty
-    expect(p.inputBuffer.size).toBe(0);
+    // H4: only one input processed per tick (FIFO — seq 1)
+    expect(p.lastInputSeq).toBe(1);
+    // Remaining 4 still in buffer for subsequent ticks
+    expect(p.inputBuffer.size).toBe(4);
   });
 });
 

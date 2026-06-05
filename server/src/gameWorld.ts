@@ -6,15 +6,14 @@
  *
  * Bug fixes (m5-m6-netcode-fix-plan.md):
  * - Bug 1: ackInputSeq only advances when input is SIMULATED (not received)
- * - Bug 2: Tick drain processes ALL buffered inputs in ascending seq order,
- *   up to MAX_INPUTS_PER_TICK per tick
+ * - Bug 2: Tick drain now processes at most one input per tick (H4 fix)
  */
 import {
   TICK_DT, PLAYER_MAX_HP, MAG_SIZE, DAMAGE_BODY, DAMAGE_HEAD,
   RESPAWN_DELAY_S, PLAYER_EYE_HEIGHT, ARENA_HALF, HITSCAN_MAX_RANGE,
   SPAWN_POSITIONS, LAGCOMP_HISTORY_TICKS, INPUT_BUFFER_MAX,
   MAX_PLAYERS, KILL_GOAL, RELOAD_TIME_S, FIRE_RATE_RPM,
-  MAX_INPUTS_PER_TICK, HITBOX_BODY_RADIUS, HITBOX_HEAD_RADIUS, HITBOX_HEAD_OFFSET,
+  HITBOX_BODY_RADIUS, HITBOX_HEAD_RADIUS, HITBOX_HEAD_OFFSET,
 } from '../../shared/constants.js';
 import { OBSTACLES as SHARED_OBSTACLES } from '../../shared/constants.js';
 import { playerStep, type PlayerSim } from '../../shared/simulation/step.js';
@@ -311,8 +310,10 @@ export class GameWorld {
         continue;
       }
 
-      // --- Drain: collect ALL new inputs, sort ascending, process up to cap ---
-      // BUG FIX (Bug 2): was only picking the single highest-seq input.
+      // --- Drain: process at most ONE fresh input per tick (FIFO).
+      // H4 fix: capping to  input prevents speed/fire-rate exploits from
+      // clients that spam multiple inputs per tick.
+      // Trade-off: backlog under packet loss adds a little latency; acceptable.
       const newInputs: Array<{ seq: number; input: InputFrame }> = [];
       for (const [seq, buf] of p.inputBuffer) {
         if (seq > p.lastInputSeq) {
@@ -322,17 +323,14 @@ export class GameWorld {
       newInputs.sort((a, b) => a.seq - b.seq);
 
       let inputsProcessed = 0;
-      for (const { seq, input: drainInput } of newInputs) {
-        if (inputsProcessed >= MAX_INPUTS_PER_TICK) break;
-
+      if (newInputs.length > 0) {
+        const { seq, input: drainInput } = newInputs[0];
         this.processSingleInput(p, drainInput, dt, otherPlayersList);
-
-        // Update tracking
         p.inputBuffer.delete(seq);
         p.lastInputSeq = seq;
         p.lastIntent = drainInput;
         p.intentRepeatTicks = 0;
-        inputsProcessed++;
+        inputsProcessed = 1;
       }
 
       // BUG FIX (Bug 1): ack = highest SIMULATED seq
