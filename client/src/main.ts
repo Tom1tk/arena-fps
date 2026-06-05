@@ -1378,6 +1378,10 @@ function renderLoop(now: number): void {
   }
 
   // --- PRACTICE MODE: local simulation ---
+  // M6: Client hitscan is ONLY used in practice mode for dummy targets.
+  // Networked mode skips this entire block (returns above). Server is
+  // authoritative for all game state; client never applies its own hitscan
+  // to real player HP or events.
   simAccum += frameDt;
   while (simAccum >= TICK_DT) {
     // Don't simulate movement/shooting when dead — only countdown
