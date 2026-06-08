@@ -607,21 +607,38 @@ function togglePause(): void {
   }
   if (!paused) {
     paused = true;
-    pauseOverlay.style.display = 'flex';
+    // In networked mode: show a minimal "PAUSED" indicator, not the full overlay
+    if (networkedMode) {
+      pauseOverlay.style.display = 'none';
+      settingsOverlay.style.display = 'none';
+    } else {
+      pauseOverlay.style.display = 'flex';
+    }
     document.exitPointerLock();
   } else {
     paused = false;
     pauseOverlay.style.display = 'none';
+    settingsOverlay.style.display = 'none';
     (document.querySelector('canvas') as HTMLCanvasElement)?.requestPointerLock();
   }
 }
-
 // Detect pointer lock being lost by Escape key (browser eats the keydown event,
 // so we listen for the lock-change signal and pause in response).
+// Only auto-pause when the document is still focused (i.e. the user pressed
+// Escape, not lost tab focus). Otherwise switching tabs pauses the game.
 document.addEventListener('pointerlockchange', () => {
-  // Pointer lock was lost while game is running, not paused, not tab-open → Esc pressed
-  if (started && !paused && !tabOpen && !document.pointerLockElement) {
+  if (started && !paused && !tabOpen && !document.pointerLockElement && document.hasFocus()) {
     togglePause();
+  }
+});
+
+// Auto-resume when tab regains focus after being paused
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && paused && networkedMode) {
+    // Tab is back and we're in networked pause mode — resume automatically
+    paused = false;
+    const canvas = document.querySelector('canvas') as HTMLCanvasElement;
+    canvas?.requestPointerLock();
   }
 });
 
