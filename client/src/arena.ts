@@ -88,8 +88,8 @@ export function createArena(quality: GraphicsQuality) {
     // Mid-edge cover
     { x: 10, z: 0, w: 1.5, h: 2, d: 4 },
     { x: -10, z: 0, w: 1.5, h: 2, d: 4 },
-    { x: 0, z: 10, w: 4, h: 2, d: 1.5 },
-    { x: 0, z: -10, w: 4, h: 2, d: 1.5 },
+    { x: 0, z: 11, w: 4, h: 2, d: 1.5 },
+    { x: 0, z: -11, w: 4, h: 2, d: 1.5 },
   ];
 
   for (let i = 0; i < obstaclePositions.length; i++) {
