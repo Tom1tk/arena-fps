@@ -62,10 +62,12 @@ export function createArena(quality: GraphicsQuality) {
     mesh.name = 'ramp';
     group.add(mesh);
 
-    // Support wall behind ramp
+    // Support wall behind ramp low end (tucked under ramp, slightly behind)
     const supportGeo = new THREE.BoxGeometry(rampWidth, rampHeight, 0.3);
-    const support = new THREE.Mesh(supportGeo, wallMat);
-    support.position.set(x, rampHeight / 2, z - Math.cos(rotationY) * rampLength / 2 * 0.95);
+    const support = new THREE.Mesh(supportGeo, rampMat);
+    const cosR = Math.cos(rotationY);
+    support.position.set(x, rampHeight / 2, z - cosR * rampLength / 2 - cosR * 0.15);
+    support.name = 'ramp-support';
     group.add(support);
   }
 
