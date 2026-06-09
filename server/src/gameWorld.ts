@@ -733,15 +733,18 @@ export class GameWorld {
     const dz = target.sim.pos.z - bot.sim.pos.z;
     const dist = Math.sqrt(dx * dx + dz * dz);
     if (Math.random() < Math.max(0.3, 1 - dist / 30)) {
-      const dmg = DAMAGE_BODY;
+      // In practice mode, bots don't damage the player — they're just movement targets.
+      const dmg = this.bots.length > 0 ? 0 : DAMAGE_BODY;
       target.hp -= dmg;
-      this.events.push({ type: 'Hit', by: bot.id, target: target.id, dmg, head: false });
-      if (target.hp <= 0) {
-        target.alive = false;
-        target.deaths++;
-        target.respawnTimer = RESPAWN_DELAY_S;
-        bot.kills++;
-        this.events.push({ type: 'Kill', killer: bot.id, victim: target.id });
+      if (dmg > 0) {
+        this.events.push({ type: 'Hit', by: bot.id, target: target.id, dmg, head: false });
+        if (target.hp <= 0) {
+          target.alive = false;
+          target.deaths++;
+          target.respawnTimer = RESPAWN_DELAY_S;
+          bot.kills++;
+          this.events.push({ type: 'Kill', killer: bot.id, victim: target.id });
+        }
       }
     }
   }

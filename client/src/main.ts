@@ -1082,7 +1082,7 @@ function initGame(networked: boolean = false): void {
   // Collect obstacle meshes for raycast occlusion
   obstacleMeshes = [];
   arena.group.traverse((obj) => {
-    if (obj instanceof THREE.Mesh && obj.name !== 'ramp') {
+    if (obj instanceof THREE.Mesh) {
       obstacleMeshes.push(obj);
     }
   });

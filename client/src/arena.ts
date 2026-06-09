@@ -13,7 +13,6 @@ export function createArena(quality: GraphicsQuality) {
   // --- Materials ---
   const floorMat = new THREE.MeshLambertMaterial({ color: 0x3a3a4a, flatShading: true });
   const wallMat = new THREE.MeshLambertMaterial({ color: 0x5a5a6a, flatShading: true });
-  const rampMat = new THREE.MeshLambertMaterial({ color: 0x6a7a6a, flatShading: true });
   const obstacleMats: THREE.MeshLambertMaterial[] = [
     new THREE.MeshLambertMaterial({ color: 0x8a5a3a, flatShading: true }),
     new THREE.MeshLambertMaterial({ color: 0x3a6a8a, flatShading: true }),
@@ -48,31 +47,6 @@ export function createArena(quality: GraphicsQuality) {
   addWall(wallThickness, wallHeight, 40, arenaSize, wallHeight / 2, 0);
   // West wall
   addWall(wallThickness, wallHeight, 40, -arenaSize, wallHeight / 2, 0);
-
-  // --- Ramps (two ramps on opposite sides, slope-friendly) ---
-  function addRamp(x: number, z: number, rotationY: number) {
-    const rampLength = 6;
-    const rampHeight = 2;
-    const rampWidth = 4;
-    const geo = new THREE.BoxGeometry(rampWidth, 0.3, rampLength);
-    const mesh = new THREE.Mesh(geo, rampMat);
-    mesh.position.set(x, rampHeight / 2, z);
-    mesh.rotation.y = rotationY;
-    mesh.rotation.x = -Math.atan2(rampHeight, rampLength);
-    mesh.name = 'ramp';
-    group.add(mesh);
-
-    // Support wall behind ramp low end (tucked under ramp, slightly behind)
-    const supportGeo = new THREE.BoxGeometry(rampWidth, rampHeight, 0.3);
-    const support = new THREE.Mesh(supportGeo, rampMat);
-    const cosR = Math.cos(rotationY);
-    support.position.set(x, rampHeight / 2, z - cosR * rampLength / 2 - cosR * 0.15);
-    support.name = 'ramp-support';
-    group.add(support);
-  }
-
-  addRamp(0, -12, 0);
-  addRamp(0, 12, Math.PI);
 
   // --- Obstacles (boxes) ---
   const obstaclePositions: { x: number; z: number; w: number; h: number; d: number }[] = [

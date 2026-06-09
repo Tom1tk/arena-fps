@@ -131,12 +131,4 @@ export const OBSTACLES: AABB[] = [
   { min: { x: -2, y: 0, z: 10.25 }, max: { x: 2, y: 2, z: 11.75 } },
   // { x: 0, z: -11, w: 4, h: 2, d: 1.5 }
   { min: { x: -2, y: 0, z: -11.75 }, max: { x: 2, y: 2, z: -10.25 } },
-  // North ramp collision (AABB of tilted box)
-  { min: { x: -2, y: 0, z: -14.89 }, max: { x: 2, y: 2.1, z: -9.11 } },
-  // North ramp support wall (at z ≈ -15.15)
-  { min: { x: -2, y: 0, z: -15.3 }, max: { x: 2, y: 2, z: -15 } },
-  // South ramp collision (AABB of tilted box)
-  { min: { x: -2, y: 0, z: 9.11 }, max: { x: 2, y: 2.1, z: 14.89 } },
-  // South ramp support wall (at z ≈ 15.15)
-  { min: { x: -2, y: 0, z: 15 }, max: { x: 2, y: 2, z: 15.3 } },
 ];
