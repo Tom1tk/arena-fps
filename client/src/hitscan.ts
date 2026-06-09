@@ -122,15 +122,11 @@ export class DummyTarget {
 
     // Bot attacks player if nearby
     let damageDealt = 0;
+    // Bots don't damage the player in practice mode — they're just shooting targets.
     this.attackCooldown -= dt;
+    // Attack cooldown still runs (for visual feedback) but never deals damage:
     if (this.attackCooldown <= 0 && playerPos) {
       this.attackCooldown = 1 / this._attackRate;
-      const dx = playerPos.x - this.group.position.x;
-      const dz = playerPos.z - this.group.position.z;
-      const dist = Math.sqrt(dx * dx + dz * dz);
-      if (dist < 15) { // attack range
-        damageDealt = BOT_DAMAGE;
-      }
     }
 
     this._updateLabel();
